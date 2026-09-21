@@ -34,7 +34,7 @@ config :jotty, soniox_api_key: "..."
 Then rebuild the escript so the development configuration is included, and run it:
 
 ```bash
-mix escript.build
+just build
 ./jotty record
 ```
 

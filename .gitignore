@@ -1,0 +1,7 @@
+/_build/
+/deps/
+/jotty
+/tmp/
+/native/recorder/.build/
+/config/dev.secret.exs
+.DS_Store

@@ -3,5 +3,7 @@
 /jotty
 /tmp/
 /native/recorder/.build/
+/desktop/**/node_modules/
+/desktop/dist/
 /config/dev.secret.exs
 .DS_Store

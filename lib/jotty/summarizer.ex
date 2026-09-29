@@ -27,12 +27,15 @@ defmodule Jotty.Summarizer do
     shell_command =
       ~S(exec "$1" exec --sandbox read-only --ephemeral --ignore-user-config --ignore-rules --skip-git-repo-check --output-last-message "$3" - < "$2")
 
-    case System.cmd(
-           "/bin/sh",
-           ["-c", shell_command, "jotty-codex", codex, prompt_path, response_path],
-           cd: workspace,
-           stderr_to_stdout: true
-         ) do
+    result =
+      System.cmd(
+        "/bin/sh",
+        ["-c", shell_command, "jotty-codex", codex, prompt_path, response_path],
+        cd: workspace,
+        stderr_to_stdout: true
+      )
+
+    case result do
       {_output, 0} ->
         File.cp!(response_path, summary_path)
         :ok

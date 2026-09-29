@@ -1,15 +1,21 @@
 defmodule Jotty.CLI do
   @moduledoc false
 
+  alias Jotty.Desktop.Server
+
   @spec main([String.t()]) :: no_return()
   def main(arguments) do
     case run(arguments) do
-      {:ok, recording} ->
-        IO.puts(recording.directory)
+      {:ok, %Server{} = server} ->
+        IO.puts(Jason.encode!(%{type: "ready", websocket_url: "ws://127.0.0.1:#{server.port}/ws"}))
+        Process.sleep(:infinity)
+
+      {:ok, result} ->
+        IO.puts(success_path(result))
         System.halt(0)
 
       {:error, :usage} ->
-        IO.puts(:stderr, "Usage: jotty record")
+        print_usage()
         System.halt(64)
 
       {:error, reason} ->
@@ -21,15 +27,94 @@ defmodule Jotty.CLI do
   @doc """
   Validates the command and runs one complete recording workflow.
   """
-  @spec run([String.t()]) :: {:ok, Jotty.Recording.t()} | {:error, term()}
-  def run(["record"]) do
-    with {:ok, api_key} <- fetch_api_key(),
-         {:ok, recorder} <- native_recorder() do
-      Jotty.record(System.user_home!(), recorder, api_key, DateTime.utc_now())
+  @spec run([String.t()]) :: {:ok, Jotty.Recording.t() | Path.t() | Server.t()} | {:error, term()}
+  def run(["record" | arguments]) do
+    parsed = OptionParser.parse(arguments, strict: [context: :keep])
+    run_record(parsed)
+  end
+
+  def run(["enrich", recording_directory | arguments]) do
+    switches = [context: :string, model: :string, reasoning_effort: :string]
+
+    with {options, [], []} <- OptionParser.parse(arguments, strict: switches),
+         {:ok, context_directory} <- Keyword.fetch(options, :context) do
+      enrichment_options = Keyword.take(options, [:model, :reasoning_effort])
+      Jotty.Enricher.enrich(recording_directory, context_directory, enrichment_options)
+    else
+      _invalid_arguments -> {:error, :usage}
     end
   end
 
+  def run(["assist" | arguments]) do
+    parsed = OptionParser.parse(arguments, strict: [context: :keep])
+    run_assistant(parsed)
+  end
+
+  def run(["serve" | arguments]) do
+    parsed = OptionParser.parse(arguments, strict: [port: :integer])
+    run_server(parsed)
+  end
+
   def run(_arguments), do: {:error, :usage}
+
+  defp run_record({options, [], []}) do
+    context_directories = Keyword.get_values(options, :context)
+    home = System.user_home!()
+    recorded_at = DateTime.utc_now()
+
+    with :ok <- Jotty.Assistant.validate_contexts(context_directories),
+         {:ok, api_key} <- fetch_api_key(),
+         {:ok, recorder} <- native_recorder() do
+      Jotty.record(home, recorder, api_key, recorded_at, contexts: context_directories)
+    end
+  end
+
+  defp run_record(_invalid_arguments), do: {:error, :usage}
+
+  defp run_assistant({options, [], []}) do
+    context_directories = Keyword.get_values(options, :context)
+    home = System.user_home!()
+    utterances = IO.stream(:stdio, :line)
+    started_at = DateTime.utc_now()
+
+    if context_directories == [] do
+      {:error, :usage}
+    else
+      Jotty.Assistant.run(home, context_directories, utterances, started_at)
+    end
+  end
+
+  defp run_assistant(_invalid_arguments), do: {:error, :usage}
+
+  defp run_server({options, [], []}) do
+    port = Keyword.get(options, :port, 4_765)
+    home = System.user_home!()
+
+    with {:ok, api_key} <- fetch_api_key(),
+         {:ok, recorder} <- native_recorder() do
+      record = fn event_sink ->
+        Jotty.record(home, recorder, api_key, DateTime.utc_now(),
+          realtime: true,
+          recorder_stop: :message,
+          event_sink: event_sink
+        )
+      end
+
+      Server.start(record: record, port: port)
+    end
+  end
+
+  defp run_server(_invalid_arguments), do: {:error, :usage}
+
+  defp success_path(%Jotty.Recording{directory: directory}), do: directory
+  defp success_path(path) when is_binary(path), do: path
+
+  defp print_usage do
+    usage =
+      "Usage:\n  jotty record [--context CONTEXT_DIRECTORY ...]\n  jotty serve [--port PORT]\n  jotty enrich RECORDING_DIRECTORY --context CONTEXT_DIRECTORY [--model MODEL] [--reasoning-effort EFFORT]\n  jotty assist --context CONTEXT_DIRECTORY [--context CONTEXT_DIRECTORY ...]"
+
+    IO.puts(:stderr, usage)
+  end
 
   defp fetch_api_key do
     case Application.fetch_env(:jotty, :soniox_api_key) do
@@ -74,5 +159,18 @@ defmodule Jotty.CLI do
 
   defp format_error({:ffmpeg, output}), do: "FFmpeg failed: #{output}"
   defp format_error({:codex, output}), do: "Codex failed: #{output}"
+  defp format_error({:transcript_not_found, path}), do: "transcript not found at #{path}"
+
+  defp format_error({:context_directory_not_found, path}) do
+    "context directory not found at #{path}"
+  end
+
+  defp format_error(:hermes_not_found), do: "hermes executable was not found in PATH"
+  defp format_error(:codex_not_found), do: "codex executable was not found in PATH"
+
+  defp format_error({:hermes, status, output}) do
+    "Hermes failed with status #{status}: #{output}"
+  end
+
   defp format_error(reason), do: inspect(reason)
 end

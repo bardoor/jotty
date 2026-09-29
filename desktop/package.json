@@ -1,0 +1,37 @@
+{
+  "name": "jotty-desktop",
+  "version": "0.2.0",
+  "private": true,
+  "main": "dist/main/main.js",
+  "scripts": {
+    "backend:build": "cd .. && just build",
+    "build": "npm run typecheck && npm run build:main && npm run build:renderer",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "vite build",
+    "dev": "npm run backend:build && concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "dev:electron": "wait-on tcp:127.0.0.1:5173 && npm run build:main && VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
+    "dev:renderer": "vite --host 127.0.0.1",
+    "start": "electron .",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-markdown": "^10.1.0"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^9.2.1",
+    "electron": "^44.5.0",
+    "jsdom": "^30.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.2",
+    "wait-on": "^9.0.3"
+  }
+}

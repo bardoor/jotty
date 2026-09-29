@@ -5,10 +5,12 @@ import ScreenCaptureKit
 final class AudioStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
   let queue: DispatchQueue
   private let writer: AudioFileWriter
+  private let liveEmitter: LiveAudioEmitter?
 
-  init(label: String, outputURL: URL) {
+  init(label: String, outputURL: URL, liveEmitter: LiveAudioEmitter?) {
     queue = DispatchQueue(label: label)
     writer = AudioFileWriter(outputURL: outputURL)
+    self.liveEmitter = liveEmitter
   }
 
   func stream(
@@ -20,10 +22,16 @@ final class AudioStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
       return
     }
 
+    append(sampleBuffer)
+  }
+
+  func append(_ sampleBuffer: CMSampleBuffer) {
     writer.append(sampleBuffer)
+    liveEmitter?.process(sampleBuffer)
   }
 
   func finish() async throws {
+    liveEmitter?.finish()
     try await writer.finish()
   }
 }
@@ -49,14 +57,28 @@ final class Recorder: NSObject, SCStreamDelegate, @unchecked Sendable {
   private var streamFailure: Swift.Error?
   private let failureLock = NSLock()
 
-  init(paths: RecordingPaths) {
+  init(paths: RecordingPaths, liveOutput: PacketWriting?) {
     systemOutput = AudioStreamOutput(
       label: "dev.jotty.recorder.system-audio",
-      outputURL: paths.systemAudio
+      outputURL: paths.systemAudio,
+      liveEmitter: liveOutput.map {
+        LiveAudioEmitter(
+          source: .system,
+          converter: CanonicalPCMConverter(),
+          packetWriter: $0
+        )
+      }
     )
     microphoneOutput = AudioStreamOutput(
       label: "dev.jotty.recorder.microphone",
-      outputURL: paths.microphoneAudio
+      outputURL: paths.microphoneAudio,
+      liveEmitter: liveOutput.map {
+        LiveAudioEmitter(
+          source: .microphone,
+          converter: CanonicalPCMConverter(),
+          packetWriter: $0
+        )
+      }
     )
   }
 

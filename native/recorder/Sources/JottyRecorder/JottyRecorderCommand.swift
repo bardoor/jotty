@@ -25,17 +25,28 @@ final class InterruptWaiter: @unchecked Sendable {
 @main
 struct JottyRecorderCommand {
   static func main() async {
-    guard CommandLine.arguments.count == 2 else {
-      writeError("Usage: jotty-recorder OUTPUT_DIRECTORY")
+    signal(SIGPIPE, SIG_IGN)
+
+    guard let arguments = arguments() else {
+      writeError("Usage: jotty-recorder [--live] OUTPUT_DIRECTORY")
       exit(EX_USAGE)
     }
 
     do {
-      let paths = try RecordingPaths(directoryPath: CommandLine.arguments[1])
+      let paths = try RecordingPaths(directoryPath: arguments.outputDirectory)
       try await ensurePermissions()
 
-      let recorder = Recorder(paths: paths)
+      let packetWriter = PacketWriter(output: .standardOutput)
+      let recorder = Recorder(paths: paths, liveOutput: arguments.live ? packetWriter : nil)
       try await recorder.start()
+
+      do {
+        try packetWriter.writeReady()
+      } catch {
+        try await recorder.stop()
+        throw error
+      }
+
       writeError("Recording system audio and default microphone. Press Ctrl-C to stop.")
 
       await InterruptWaiter().wait()
@@ -46,6 +57,17 @@ struct JottyRecorderCommand {
     } catch {
       writeError("Error: \(error.localizedDescription)")
       exit(EXIT_FAILURE)
+    }
+  }
+
+  private static func arguments() -> (outputDirectory: String, live: Bool)? {
+    switch CommandLine.arguments.dropFirst() {
+    case let arguments where arguments.count == 1:
+      return (arguments[arguments.startIndex], false)
+    case let arguments where arguments.count == 2 && arguments.first == "--live":
+      return (arguments[arguments.index(after: arguments.startIndex)], true)
+    default:
+      return nil
     }
   }
 

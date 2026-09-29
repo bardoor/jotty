@@ -41,8 +41,7 @@ defmodule Jotty.Soniox do
 
   defp upload(request, audio_path) do
     file =
-      {File.stream!(audio_path, 64_000, []),
-       filename: Path.basename(audio_path), content_type: "audio/mp4"}
+      {File.stream!(audio_path, 64_000, []), filename: Path.basename(audio_path), content_type: "audio/mp4"}
 
     result = Req.post(request, url: "/v1/files", form_multipart: [file: file])
 
@@ -69,24 +68,30 @@ defmodule Jotty.Soniox do
 
   defp wait_until_completed(request, transcription_id, deadline) do
     result = Req.get(request, url: "/v1/transcriptions/#{transcription_id}")
+    response = response_body(result)
 
-    case response_body(result) do
-      {:ok, %{"status" => "completed"}} ->
-        :ok
+    handle_status(response, request, transcription_id, deadline)
+  end
 
-      {:ok, %{"status" => "error", "error_message" => message}} ->
-        {:error, {:transcription, message}}
+  defp handle_status({:ok, %{"status" => "completed"}}, _request, _id, _deadline), do: :ok
 
-      {:ok, %{"status" => _status}} ->
-        if System.monotonic_time(:millisecond) >= deadline do
-          {:error, :transcription_timeout}
-        else
-          Process.sleep(Application.fetch_env!(:jotty, :soniox_poll_interval))
-          wait_until_completed(request, transcription_id, deadline)
-        end
+  defp handle_status(
+         {:ok, %{"status" => "error", "error_message" => message}},
+         _request,
+         _id,
+         _deadline
+       ) do
+    {:error, {:transcription, message}}
+  end
 
-      {:error, reason} ->
-        {:error, reason}
+  defp handle_status({:error, reason}, _request, _id, _deadline), do: {:error, reason}
+
+  defp handle_status({:ok, %{"status" => _status}}, request, transcription_id, deadline) do
+    if System.monotonic_time(:millisecond) >= deadline do
+      {:error, :transcription_timeout}
+    else
+      Process.sleep(Application.fetch_env!(:jotty, :soniox_poll_interval))
+      wait_until_completed(request, transcription_id, deadline)
     end
   end
 

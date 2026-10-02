@@ -10,17 +10,12 @@ describe("desktop protocol state", () => {
       utterances: [
         {
           type: "utterance_completed",
-          source: "system",
           chunks: [{ speaker: "1", text: "Welcome", start_ms: 0, end_ms: 10 }]
         }
       ],
-      previews: {
-        system: null,
-        microphone: {
-          type: "transcription_previewed",
-          source: "microphone",
-          chunks: [{ speaker: "1", text: "Hello", start_ms: 10, end_ms: 20 }]
-        }
+      preview: {
+        type: "transcription_previewed",
+        chunks: [{ speaker: "2", text: "Hello", start_ms: 10, end_ms: 20 }]
       },
       realtime_error: null,
       summary: null,
@@ -29,23 +24,21 @@ describe("desktop protocol state", () => {
 
     expect(state.status).toBe("recording");
     expect(state.utterances[0].chunks[0].text).toBe("Welcome");
-    expect(state.previews.microphone?.chunks[0].text).toBe("Hello");
+    expect(state.preview?.chunks[0].text).toBe("Hello");
   });
 
   it("replaces provisional text with the completed utterance", () => {
     const previewed = reduceServerEvent(initialState, {
       type: "transcription_previewed",
-      source: "system",
       chunks: [{ speaker: "1", text: "Draft", start_ms: 0, end_ms: 10 }]
     });
 
     const completed = reduceServerEvent(previewed, {
       type: "utterance_completed",
-      source: "system",
       chunks: [{ speaker: "1", text: "Final", start_ms: 0, end_ms: 12 }]
     });
 
-    expect(completed.previews.system).toBeNull();
+    expect(completed.preview).toBeNull();
     expect(completed.utterances.at(-1)?.chunks[0].text).toBe("Final");
   });
 

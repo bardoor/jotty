@@ -5,19 +5,24 @@ defmodule Jotty.Recorder do
 
   alias Jotty.LiveAudioPacket
 
+  @startup_timeout 30_000
+  @stop_timeout 15_000
+  @termination_timeout 1_000
+
   @type live_event ::
           LiveAudioPacket.frame() | {:live_transport_failed, LiveAudioPacket.protocol_error()}
   @type result ::
           :ok
           | {:error, {:recorder, non_neg_integer()}}
           | {:error, {:recorder_signal, non_neg_integer(), String.t()}}
+          | {:error, :recorder_start_timeout | :recorder_stop_timeout}
 
   @doc """
   Runs the native recorder in archival-only mode and waits for its finalized exit status.
   """
   @spec record(Path.t(), Path.t()) :: result()
   def record(executable, directory) do
-    run(executable, directory, [], nil, :stdio)
+    run(executable, directory, [], nil, stop: :stdio)
   end
 
   @doc """
@@ -30,10 +35,10 @@ defmodule Jotty.Recorder do
 
   @spec record_live(Path.t(), Path.t(), (live_event() -> any()), keyword()) :: result()
   def record_live(executable, directory, consumer, options) do
-    run(executable, directory, ["--live"], consumer, Keyword.get(options, :stop, :stdio))
+    run(executable, directory, ["--live"], consumer, options)
   end
 
-  defp run(executable, directory, arguments, consumer, stop_mode) do
+  defp run(executable, directory, arguments, consumer, options) do
     args = Enum.map(arguments ++ [directory], &String.to_charlist/1)
 
     port =
@@ -49,17 +54,41 @@ defmodule Jotty.Recorder do
       )
 
     {:os_pid, os_pid} = Port.info(port, :os_pid)
-    await_ready(port, os_pid, consumer, true, stop_mode)
+    startup_timeout = Keyword.get(options, :startup_timeout, @startup_timeout)
+    termination_timeout = Keyword.get(options, :termination_timeout, @termination_timeout)
+    stop_options = {Keyword.get(options, :stop, :stdio), Keyword.get(options, :stop_timeout, @stop_timeout)}
+
+    await_ready(port, os_pid, consumer, true, stop_options, startup_timeout, termination_timeout)
   end
 
-  defp await_ready(port, os_pid, consumer, transport_usable?, stop_mode) do
+  defp await_ready(
+         port,
+         os_pid,
+         consumer,
+         transport_usable?,
+         {stop_mode, stop_timeout},
+         startup_timeout,
+         termination_timeout
+       ) do
     receive do
       {^port, {:data, payload}} ->
         transport_usable? = consume(payload, consumer, transport_usable?)
-        await_stop(port, os_pid, stop_signal(stop_mode), consumer, transport_usable?)
+
+        await_stop(
+          port,
+          os_pid,
+          stop_signal(stop_mode),
+          consumer,
+          transport_usable?,
+          stop_timeout,
+          termination_timeout
+        )
 
       {^port, {:exit_status, status}} ->
         exit_result(status)
+    after
+      startup_timeout ->
+        terminate_recorder(port, os_pid, :recorder_start_timeout, termination_timeout)
     end
   end
 
@@ -84,15 +113,26 @@ defmodule Jotty.Recorder do
          os_pid,
          {:stdio, input_pid, input_reference} = stop_signal,
          consumer,
-         transport_usable?
+         transport_usable?,
+         stop_timeout,
+         termination_timeout
        ) do
     receive do
       {^port, {:data, payload}} ->
         transport_usable? = consume(payload, consumer, transport_usable?)
-        await_stop(port, os_pid, stop_signal, consumer, transport_usable?)
+
+        await_stop(
+          port,
+          os_pid,
+          stop_signal,
+          consumer,
+          transport_usable?,
+          stop_timeout,
+          termination_timeout
+        )
 
       {^input_reference, :stop} ->
-        stop(port, os_pid, consumer, transport_usable?)
+        stop(port, os_pid, consumer, transport_usable?, stop_timeout, termination_timeout)
 
       {^port, {:exit_status, status}} ->
         Process.exit(input_pid, :kill)
@@ -100,39 +140,104 @@ defmodule Jotty.Recorder do
     end
   end
 
-  defp await_stop(port, os_pid, :message, consumer, transport_usable?) do
+  defp await_stop(
+         port,
+         os_pid,
+         :message,
+         consumer,
+         transport_usable?,
+         stop_timeout,
+         termination_timeout
+       ) do
     receive do
       {^port, {:data, payload}} ->
         transport_usable? = consume(payload, consumer, transport_usable?)
-        await_stop(port, os_pid, :message, consumer, transport_usable?)
+
+        await_stop(
+          port,
+          os_pid,
+          :message,
+          consumer,
+          transport_usable?,
+          stop_timeout,
+          termination_timeout
+        )
 
       :stop ->
-        stop(port, os_pid, consumer, transport_usable?)
+        stop(port, os_pid, consumer, transport_usable?, stop_timeout, termination_timeout)
 
       {^port, {:exit_status, status}} ->
         exit_result(status)
     end
   end
 
-  defp stop(port, os_pid, consumer, transport_usable?) do
+  defp stop(port, os_pid, consumer, transport_usable?, stop_timeout, termination_timeout) do
     case System.cmd("/bin/kill", ["-INT", Integer.to_string(os_pid)], stderr_to_stdout: true) do
-      {_output, 0} -> await_exit(port, consumer, transport_usable?)
-      {output, status} -> {:error, {:recorder_signal, status, String.trim(output)}}
+      {_output, 0} ->
+        await_exit(
+          port,
+          os_pid,
+          consumer,
+          transport_usable?,
+          deadline(stop_timeout),
+          termination_timeout
+        )
+
+      {output, status} ->
+        {:error, {:recorder_signal, status, String.trim(output)}}
     end
   end
 
-  defp await_exit(port, consumer, transport_usable?) do
+  defp await_exit(port, os_pid, consumer, transport_usable?, stop_deadline, termination_timeout) do
     receive do
       {^port, {:data, payload}} ->
         transport_usable? = consume(payload, consumer, transport_usable?)
-        await_exit(port, consumer, transport_usable?)
+        await_exit(port, os_pid, consumer, transport_usable?, stop_deadline, termination_timeout)
 
       {^port, {:exit_status, 0}} ->
         :ok
 
       {^port, {:exit_status, status}} ->
         exit_result(status)
+    after
+      remaining(stop_deadline) ->
+        terminate_recorder(port, os_pid, :recorder_stop_timeout, termination_timeout)
     end
+  end
+
+  defp terminate_recorder(port, os_pid, reason, timeout) do
+    signal(os_pid, "-TERM")
+    await_termination(port, os_pid, deadline(timeout), timeout)
+    {:error, reason}
+  end
+
+  defp await_termination(port, os_pid, termination_deadline, timeout) do
+    receive do
+      {^port, {:exit_status, _status}} -> :ok
+      {^port, {:data, _payload}} -> await_termination(port, os_pid, termination_deadline, timeout)
+    after
+      remaining(termination_deadline) ->
+        signal(os_pid, "-KILL")
+        await_killed(port, deadline(timeout))
+    end
+  end
+
+  defp await_killed(port, kill_deadline) do
+    receive do
+      {^port, {:exit_status, _status}} -> :ok
+      {^port, {:data, _payload}} -> await_killed(port, kill_deadline)
+    after
+      remaining(kill_deadline) ->
+        if Port.info(port) != nil, do: Port.close(port)
+    end
+  end
+
+  defp deadline(timeout), do: System.monotonic_time(:millisecond) + timeout
+  defp remaining(deadline), do: max(deadline - System.monotonic_time(:millisecond), 0)
+
+  defp signal(os_pid, signal) do
+    System.cmd("/bin/kill", [signal, Integer.to_string(os_pid)], stderr_to_stdout: true)
+    :ok
   end
 
   defp consume(_payload, _consumer, false), do: false

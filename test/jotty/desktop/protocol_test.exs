@@ -2,7 +2,8 @@ defmodule Jotty.Desktop.ProtocolTest do
   use ExUnit.Case, async: true
 
   alias Jotty.Desktop.Protocol
-  alias Jotty.Session.{TranscriptionPreviewed, UtteranceCompleted}
+  alias Jotty.Session.Presentation.Snapshot
+  alias Jotty.Session.Events.{TranscriptionPreviewed, UtteranceCompleted}
   alias Jotty.STT.TranscriptionChunk
 
   test "decodes recording commands" do
@@ -10,12 +11,11 @@ defmodule Jotty.Desktop.ProtocolTest do
     assert Protocol.decode!(~s({"type":"stop"})) == :stop
   end
 
-  test "encodes a source-specific transcription preview" do
-    event = %TranscriptionPreviewed{source: :system, chunks: [chunk("draft", 10, 20)]}
+  test "encodes a transcription preview" do
+    event = %TranscriptionPreviewed{chunks: [chunk("draft", 10, 20)]}
 
     assert event |> Protocol.encode_event() |> Jason.decode!() == %{
              "type" => "transcription_previewed",
-             "source" => "system",
              "chunks" => [
                %{
                  "speaker" => "1",
@@ -27,12 +27,11 @@ defmodule Jotty.Desktop.ProtocolTest do
            }
   end
 
-  test "encodes a source-specific completed utterance" do
-    event = %UtteranceCompleted{source: :microphone, chunks: [chunk("done", 20, 30)]}
+  test "encodes a completed utterance" do
+    event = %UtteranceCompleted{chunks: [chunk("done", 20, 30)]}
 
     assert event |> Protocol.encode_event() |> Jason.decode!() == %{
              "type" => "utterance_completed",
-             "source" => "microphone",
              "chunks" => [
                %{
                  "speaker" => "1",
@@ -69,14 +68,13 @@ defmodule Jotty.Desktop.ProtocolTest do
   end
 
   test "encodes a reconnect snapshot with completed and provisional transcript" do
-    completed = %UtteranceCompleted{source: :system, chunks: [chunk("done", 0, 10)]}
-    preview = %TranscriptionPreviewed{source: :microphone, chunks: [chunk("draft", 10, 20)]}
+    completed = %UtteranceCompleted{chunks: [chunk("done", 0, 10)]}
+    preview = %TranscriptionPreviewed{chunks: [chunk("draft", 10, 20)]}
 
-    snapshot = %{
-      type: :snapshot,
+    snapshot = %Snapshot{
       status: :recording,
       utterances: [completed],
-      previews: %{system: nil, microphone: preview},
+      preview: preview,
       realtime_error: "system: :premature_close",
       summary: nil,
       recording_directory: nil
@@ -88,7 +86,6 @@ defmodule Jotty.Desktop.ProtocolTest do
              "utterances" => [
                %{
                  "type" => "utterance_completed",
-                 "source" => "system",
                  "chunks" => [
                    %{
                      "speaker" => "1",
@@ -99,20 +96,16 @@ defmodule Jotty.Desktop.ProtocolTest do
                  ]
                }
              ],
-             "previews" => %{
-               "system" => nil,
-               "microphone" => %{
-                 "type" => "transcription_previewed",
-                 "source" => "microphone",
-                 "chunks" => [
-                   %{
-                     "speaker" => "1",
-                     "text" => "draft",
-                     "start_ms" => 10,
-                     "end_ms" => 20
-                   }
-                 ]
-               }
+             "preview" => %{
+               "type" => "transcription_previewed",
+               "chunks" => [
+                 %{
+                   "speaker" => "1",
+                   "text" => "draft",
+                   "start_ms" => 10,
+                   "end_ms" => 20
+                 }
+               ]
              },
              "realtime_error" => "system: :premature_close",
              "summary" => nil,

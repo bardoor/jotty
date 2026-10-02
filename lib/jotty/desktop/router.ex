@@ -16,8 +16,8 @@ defmodule Jotty.Desktop.Router do
   end
 
   def call(%{method: "GET", path_info: ["ws"]} = conn, options) do
-    controller = Keyword.fetch!(options, :controller)
-    WebSockAdapter.upgrade(conn, Socket, controller, timeout: 60_000)
+    session = Keyword.fetch!(options, :session)
+    WebSockAdapter.upgrade(conn, Socket, session, timeout: :infinity)
   end
 
   def call(conn, _options), do: send_resp(conn, 404, "not found")

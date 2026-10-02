@@ -1,29 +1,26 @@
 defmodule Jotty.Desktop.Server do
   @moduledoc false
 
-  alias Jotty.Desktop.{Controller, Router}
+  alias Jotty.Desktop.Router
+  alias Jotty.Session.Server, as: SessionServer
 
-  @enforce_keys [:controller, :listener, :port]
+  @enforce_keys [:session, :listener, :port]
   defstruct @enforce_keys
 
-  @type t :: %__MODULE__{controller: pid(), listener: pid(), port: :inet.port_number()}
+  @type t :: %__MODULE__{session: pid(), listener: pid(), port: :inet.port_number()}
 
   @spec start(keyword()) :: {:ok, t()} | {:error, term()}
   def start(options) do
     port = Keyword.fetch!(options, :port)
-    {:ok, controller} = Controller.start_link(record: Keyword.fetch!(options, :record))
+    {:ok, session} = SessionServer.start_link(Keyword.fetch!(options, :session_options))
+    opts = [plug: {Router, session: session}, ip: :loopback, port: port, startup_log: false]
 
-    case Bandit.start_link(
-           plug: {Router, controller: controller},
-           ip: :loopback,
-           port: port,
-           startup_log: false
-         ) do
+    case Bandit.start_link(opts) do
       {:ok, listener} ->
-        {:ok, %__MODULE__{controller: controller, listener: listener, port: port}}
+        {:ok, %__MODULE__{session: session, listener: listener, port: port}}
 
       {:error, reason} ->
-        GenServer.stop(controller)
+        GenServer.stop(session)
         {:error, reason}
     end
   end
@@ -31,6 +28,6 @@ defmodule Jotty.Desktop.Server do
   @spec stop(t()) :: :ok
   def stop(%__MODULE__{} = server) do
     GenServer.stop(server.listener)
-    GenServer.stop(server.controller)
+    GenServer.stop(server.session)
   end
 end

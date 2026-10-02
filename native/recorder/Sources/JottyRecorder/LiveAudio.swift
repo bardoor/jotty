@@ -183,18 +183,18 @@ final class CanonicalPCMConverter: PCMConverting, @unchecked Sendable {
 final class LiveAudioEmitter: @unchecked Sendable {
   private let source: LiveAudioSource
   private let converter: PCMConverting
-  private let packetWriter: PacketWriting
+  private let mixer: LiveAudioMixing
   private let stateLock = NSLock()
   private var enabled = true
 
   init(
     source: LiveAudioSource,
     converter: PCMConverting,
-    packetWriter: PacketWriting
+    mixer: LiveAudioMixing
   ) {
     self.source = source
     self.converter = converter
-    self.packetWriter = packetWriter
+    self.mixer = mixer
   }
 
   func process(_ sampleBuffer: CMSampleBuffer) {
@@ -215,7 +215,7 @@ final class LiveAudioEmitter: @unchecked Sendable {
     }
 
     do {
-      try packetWriter.writePCM(pcm, source: source)
+      try mixer.append(pcm, source: source)
     } catch {
       fail(.packetOutput)
     }
@@ -234,12 +234,12 @@ final class LiveAudioEmitter: @unchecked Sendable {
       return
     }
 
-    guard !pcm.isEmpty else {
-      return
-    }
-
     do {
-      try packetWriter.writePCM(pcm, source: source)
+      if !pcm.isEmpty {
+        try mixer.append(pcm, source: source)
+      }
+
+      try mixer.finish(source: source)
     } catch {
       fail(.packetOutput)
     }
@@ -268,18 +268,6 @@ final class LiveAudioEmitter: @unchecked Sendable {
       return
     }
 
-    Self.attemptFailurePacket(source: source, reason: reason, packetWriter: packetWriter)
-  }
-
-  private static func attemptFailurePacket(
-    source: LiveAudioSource,
-    reason: LiveAudioFailureReason,
-    packetWriter: PacketWriting
-  ) {
-    do {
-      try packetWriter.writeFailure(source: source, reason: reason)
-    } catch {
-      // The failure packet is best-effort and is never retried.
-    }
+    mixer.fail(source: source, reason: reason)
   }
 }

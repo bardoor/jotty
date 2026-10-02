@@ -6,7 +6,6 @@ A macOS 15+ command-line recorder for calls. Jotty captures system audio and the
 
 - macOS 15+
 - Elixir 1.20 / Erlang/OTP 29
-- FFmpeg
 - just
 - Node.js 22 and npm (desktop app)
 - Codex CLI authenticated with ChatGPT (`codex login`)
@@ -61,9 +60,9 @@ To enable live project-context assistance, pass one or more explicit roots:
   --context ~/github/frontend
 ```
 
-Without `--context`, recording remains archival-only and opens no realtime Soniox connections.
+With or without `--context`, Jotty mixes system and microphone PCM in realtime and sends it through one Soniox session. The finalized realtime stream is the canonical transcript. `--context` only enables live project-context assistance.
 
-Press Enter to stop recording. Jotty sends `SIGINT` to the native recorder, waits for both tracks to be finalized, then mixes, transcribes, and summarizes them.
+Press Enter to stop recording. Jotty sends `SIGINT` to the native recorder, waits for both original tracks and the realtime Soniox stream to finish, persists the canonical transcript, then summarizes it.
 
 Each run creates:
 
@@ -71,7 +70,6 @@ Each run creates:
 ~/.jotty/recordings/<UTC timestamp>/
 ├── system.m4a
 ├── microphone.m4a
-├── audio.m4a
 ├── transcript.txt
 ├── summary.md
 └── assistant.md  # only when record is started with --context
@@ -118,4 +116,4 @@ Ordinary planning and general discussion are ignored. When a lookup is needed, H
 ~/.jotty/sessions/<UTC timestamp>/assistant.md
 ```
 
-The classifier and context search both use `gpt-5.6-luna` with low reasoning effort. The standalone command accepts text input; `record --context` obtains completed utterances from two independent realtime Soniox streams while the post-recording transcript remains canonical.
+The classifier and context search both use `gpt-5.6-luna` with low reasoning effort. The standalone command accepts text input; `record --context` obtains completed utterances from the same realtime Soniox stream that produces the canonical transcript.

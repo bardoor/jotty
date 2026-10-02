@@ -4,7 +4,7 @@ defmodule Jotty.AssistantTest do
   import ExUnit.CaptureLog
 
   alias Jotty.Assistant
-  alias Jotty.Session.UtteranceCompleted
+  alias Jotty.Session.Events.UtteranceCompleted
   alias Jotty.STT.TranscriptionChunk
 
   @tag :tmp_dir
@@ -123,7 +123,6 @@ defmodule Jotty.AssistantTest do
     Assistant.submit(
       assistant,
       %UtteranceCompleted{
-        source: :system,
         chunks: [chunk("Let's split the task into two parts.")]
       }
     )
@@ -131,7 +130,6 @@ defmodule Jotty.AssistantTest do
     Assistant.submit(
       assistant,
       %UtteranceCompleted{
-        source: :microphone,
         chunks: [chunk("What prompt does our translator currently use?")]
       }
     )
@@ -165,19 +163,21 @@ defmodule Jotty.AssistantTest do
     System.put_env("PATH", "#{bin_directory}:#{original_path}")
     on_exit(fn -> System.put_env("PATH", original_path) end)
 
+    Logger.metadata(session_id: "<0.123.0>")
     {:ok, assistant} = Assistant.start(recording_directory, [context_directory])
-    event = %UtteranceCompleted{source: :system, chunks: [chunk("Look this up")]}
+    event = %UtteranceCompleted{chunks: [chunk("Look this up")]}
 
     log =
-      capture_log([metadata: [:stage]], fn ->
+      capture_log([metadata: [:stage, :session_id]], fn ->
         Assistant.submit(assistant, event)
         Assistant.submit(assistant, event)
         assert {:error, {:codex, "classifier failed"}} = Assistant.finish(assistant)
         Logger.flush()
       end)
 
-    assert log =~ "context_lookup_failed"
+    assert log =~ "lookup_failed"
     assert log =~ "stage=classifier"
+    assert log =~ "session_id=<0.123.0>"
     refute log =~ "Look this up"
   end
 

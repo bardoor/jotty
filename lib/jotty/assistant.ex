@@ -7,7 +7,7 @@ defmodule Jotty.Assistant do
 
   require Logger
 
-  alias Jotty.Session.UtteranceCompleted
+  alias Jotty.Session.Events.UtteranceCompleted
   alias Jotty.STT.TranscriptionChunk
 
   @spec start(Path.t(), [Path.t()]) :: GenServer.on_start()
@@ -20,14 +20,16 @@ defmodule Jotty.Assistant do
       output_path = Path.join(recording_directory, "assistant.md")
       File.write!(output_path, "# Assistant context\n\n")
 
-      GenServer.start(__MODULE__, %{
+      state = %{
         context_directories: context_directories,
         codex: codex,
         hermes: hermes,
         history: [],
         output_path: output_path,
         result: :ok
-      })
+      }
+
+      GenServer.start(__MODULE__, {Logger.metadata(), state})
     end
   end
 
@@ -60,7 +62,10 @@ defmodule Jotty.Assistant do
   end
 
   @impl GenServer
-  def init(state), do: {:ok, state}
+  def init({metadata, state}) do
+    Logger.metadata(metadata)
+    {:ok, state}
+  end
 
   @impl GenServer
   def handle_cast({:submit, %UtteranceCompleted{chunks: chunks}}, %{result: :ok} = state) do
@@ -242,10 +247,10 @@ defmodule Jotty.Assistant do
   end
 
   defp handle_utterance({:error, reason}, state) do
-    Logger.error("context_lookup_failed",
-      component: :assistant,
+    Logger.error("lookup_failed",
+      scope: :assistant,
       stage: failure_stage(reason),
-      reason: :command_failed
+      reason: inspect(reason)
     )
 
     {:noreply, %{state | result: {:error, reason}}}

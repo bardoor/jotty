@@ -3,10 +3,16 @@ defmodule Jotty.STT.Soniox.WebSocketTransport do
 
   @behaviour Jotty.STT.Soniox.Transport
   use WebSockex
+  require Logger
 
   @impl Jotty.STT.Soniox.Transport
   def start(owner, source, configuration, []) do
-    state = %{owner: owner, source: source, configuration: configuration}
+    state = %{
+      owner: owner,
+      source: source,
+      configuration: configuration,
+      logger_metadata: Logger.metadata()
+    }
 
     WebSockex.start(
       "wss://stt-rt.soniox.com/transcribe-websocket",
@@ -27,14 +33,24 @@ defmodule Jotty.STT.Soniox.WebSocketTransport do
   end
 
   @impl Jotty.STT.Soniox.Transport
+  def finish(pid) do
+    try do
+      WebSockex.send_frame(pid, {:text, ""})
+    catch
+      :exit, _reason -> {:error, :not_connected}
+    end
+  end
+
+  @impl Jotty.STT.Soniox.Transport
   def stop(pid) do
     WebSockex.cast(pid, :stop)
   end
 
   @impl WebSockex
   def handle_connect(_connection, state) do
+    Logger.metadata(state.logger_metadata)
     send(self(), :send_configuration)
-    {:ok, state}
+    {:ok, Map.delete(state, :logger_metadata)}
   end
 
   @impl WebSockex
@@ -58,6 +74,7 @@ defmodule Jotty.STT.Soniox.WebSocketTransport do
 
   @impl WebSockex
   def handle_disconnect(%{reason: reason}, state) do
+    Logger.info("transport_disconnected", scope: :transcription, provider: :soniox, reason: inspect(reason))
     send(state.owner, {:soniox_transport, state.source, disconnect(reason)})
     {:ok, state}
   end

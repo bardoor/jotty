@@ -4,7 +4,7 @@ import net from "node:net";
 import path from "node:path";
 import readline from "node:readline";
 
-import { readyWebSocketUrl } from "./backend";
+import { forwardBackendOutput } from "./backend";
 
 let backend: ChildProcessWithoutNullStreams | null = null;
 
@@ -46,15 +46,14 @@ async function startBackend(): Promise<string> {
     backend!.once("exit", (code) => reject(new Error(`Jotty service exited with status ${code}`)));
     backend!.stderr.on("data", (data) => process.stderr.write(data));
 
-    lines.on("line", (line) => {
-      const websocketUrl = readyWebSocketUrl(line);
-
-      if (websocketUrl) {
+    void forwardBackendOutput(
+      lines,
+      (websocketUrl) => {
         clearTimeout(timeout);
-        lines.close();
         resolve(websocketUrl);
-      }
-    });
+      },
+      (line) => console.log(`[backend] ${line}`)
+    ).catch(reject);
   });
 }
 

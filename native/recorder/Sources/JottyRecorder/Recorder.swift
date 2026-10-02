@@ -37,6 +37,8 @@ final class AudioStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
 }
 
 final class Recorder: NSObject, SCStreamDelegate, @unchecked Sendable {
+  private static let captureOperationTimeout = Duration.seconds(10)
+
   enum Error: Swift.Error, LocalizedError {
     case mainDisplayNotFound
     case stoppedUnexpectedly(Swift.Error)
@@ -56,27 +58,34 @@ final class Recorder: NSObject, SCStreamDelegate, @unchecked Sendable {
   private var stream: SCStream?
   private var streamFailure: Swift.Error?
   private let failureLock = NSLock()
+  private let onFailure: @Sendable (Swift.Error) -> Void
 
-  init(paths: RecordingPaths, liveOutput: PacketWriting?) {
+  init(
+    paths: RecordingPaths,
+    liveOutput: PacketWriting?,
+    onFailure: @escaping @Sendable (Swift.Error) -> Void
+  ) {
+    self.onFailure = onFailure
+    let liveMixer = liveOutput.map(LiveAudioMixer.init)
     systemOutput = AudioStreamOutput(
       label: "dev.jotty.recorder.system-audio",
       outputURL: paths.systemAudio,
-      liveEmitter: liveOutput.map {
+      liveEmitter: liveMixer.map {
         LiveAudioEmitter(
           source: .system,
           converter: CanonicalPCMConverter(),
-          packetWriter: $0
+          mixer: $0
         )
       }
     )
     microphoneOutput = AudioStreamOutput(
       label: "dev.jotty.recorder.microphone",
       outputURL: paths.microphoneAudio,
-      liveEmitter: liveOutput.map {
+      liveEmitter: liveMixer.map {
         LiveAudioEmitter(
           source: .microphone,
           converter: CanonicalPCMConverter(),
-          packetWriter: $0
+          mixer: $0
         )
       }
     )
@@ -117,7 +126,9 @@ final class Recorder: NSObject, SCStreamDelegate, @unchecked Sendable {
     )
 
     self.stream = stream
-    try await stream.startCapture()
+    try await TimedCallbackOperation.run(timeout: Self.captureOperationTimeout) { completion in
+      stream.startCapture(completionHandler: completion)
+    }
   }
 
   func stop() async throws {
@@ -125,28 +136,51 @@ final class Recorder: NSObject, SCStreamDelegate, @unchecked Sendable {
       return
     }
 
-    try await stream.stopCapture()
-    try capturedStreamFailure()
+    var captureError: Swift.Error?
 
-    async let systemFinish: Void = systemOutput.finish()
-    async let microphoneFinish: Void = microphoneOutput.finish()
-    _ = try await (systemFinish, microphoneFinish)
+    if capturedStreamFailure() == nil {
+      do {
+        try await TimedCallbackOperation.run(timeout: Self.captureOperationTimeout) { completion in
+          stream.stopCapture(completionHandler: completion)
+        }
+      } catch {
+        captureError = error
+      }
+    }
+
+    do {
+      async let systemFinish: Void = systemOutput.finish()
+      async let microphoneFinish: Void = microphoneOutput.finish()
+      _ = try await (systemFinish, microphoneFinish)
+    } catch {
+      throw captureError ?? capturedStreamFailure() ?? error
+    }
 
     self.stream = nil
+
+    if let error = captureError ?? capturedStreamFailure() {
+      throw error
+    }
   }
 
   func stream(_ stream: SCStream, didStopWithError error: Swift.Error) {
     failureLock.lock()
-    streamFailure = error
+    let firstFailure = streamFailure == nil
+
+    if firstFailure {
+      streamFailure = Error.stoppedUnexpectedly(error)
+    }
+
     failureLock.unlock()
+
+    if firstFailure {
+      onFailure(Error.stoppedUnexpectedly(error))
+    }
   }
 
-  private func capturedStreamFailure() throws {
+  private func capturedStreamFailure() -> Swift.Error? {
     failureLock.lock()
     defer { failureLock.unlock() }
-
-    if let streamFailure {
-      throw Error.stoppedUnexpectedly(streamFailure)
-    }
+    return streamFailure
   }
 }

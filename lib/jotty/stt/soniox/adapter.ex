@@ -14,13 +14,13 @@ defmodule Jotty.STT.Soniox.Adapter do
     |> decode_response()
   end
 
-  defp decode_response(%{"tokens" => tokens}) do
-    {:batch, Enum.map(tokens, &Token.new/1)}
-  end
+  defp decode_response(%{"finished" => true}), do: :finished
 
   defp decode_response(%{"error_code" => code, "error_type" => type}) do
     {:error, {:provider_error, code, type}}
   end
 
-  defp decode_response(%{"finished" => true}), do: :finished
+  defp decode_response(%{"tokens" => tokens}) do
+    {:batch, Enum.map(tokens, &Token.new/1)}
+  end
 end

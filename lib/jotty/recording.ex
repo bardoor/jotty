@@ -7,7 +7,6 @@ defmodule Jotty.Recording do
     :directory,
     :system_audio,
     :microphone_audio,
-    :mixed_audio,
     :transcript,
     :summary
   ]
@@ -17,7 +16,6 @@ defmodule Jotty.Recording do
           directory: Path.t(),
           system_audio: Path.t(),
           microphone_audio: Path.t(),
-          mixed_audio: Path.t(),
           transcript: Path.t(),
           summary: Path.t()
         }
@@ -41,7 +39,6 @@ defmodule Jotty.Recording do
       directory: directory,
       system_audio: Path.join(directory, "system.m4a"),
       microphone_audio: Path.join(directory, "microphone.m4a"),
-      mixed_audio: Path.join(directory, "audio.m4a"),
       transcript: Path.join(directory, "transcript.txt"),
       summary: Path.join(directory, "summary.md")
     }

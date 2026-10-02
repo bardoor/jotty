@@ -15,7 +15,6 @@ defmodule Jotty.RecordingTest do
              directory: expected_directory,
              system_audio: Path.join(expected_directory, "system.m4a"),
              microphone_audio: Path.join(expected_directory, "microphone.m4a"),
-             mixed_audio: Path.join(expected_directory, "audio.m4a"),
              transcript: Path.join(expected_directory, "transcript.txt"),
              summary: Path.join(expected_directory, "summary.md")
            }

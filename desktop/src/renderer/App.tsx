@@ -23,11 +23,7 @@ export function App({ connection }: AppProps) {
 
   useEffect(() => {
     conversation.current!.scrollTop = conversation.current!.scrollHeight;
-  }, [state.previews, state.utterances]);
-
-  const previews = [state.previews.system, state.previews.microphone].filter(
-    (event): event is TranscriptionEvent => event !== null
-  );
+  }, [state.preview, state.utterances]);
   const summaryOpen = summaryVisible && (state.status === "stopping" || state.summary !== null);
 
   return (
@@ -73,11 +69,9 @@ export function App({ connection }: AppProps) {
           )}
 
           {state.utterances.map((event, index) => (
-            <TranscriptMessage event={event} key={`${event.source}-${index}`} />
+            <TranscriptMessage event={event} key={index} />
           ))}
-          {previews.map((event) => (
-            <TranscriptMessage event={event} key={`preview-${event.source}`} provisional />
-          ))}
+          {state.preview && <TranscriptMessage event={state.preview} provisional />}
 
           {state.realtimeError && (
             <div className="error-banner">Live transcription stopped: {state.realtimeError}</div>
@@ -144,21 +138,23 @@ function TranscriptMessage({
   event: TranscriptionEvent;
   provisional?: boolean;
 }) {
-  const microphone = event.source === "microphone";
-
   return (
-    <article className={`message ${microphone ? "right" : "left"}${provisional ? " provisional" : ""}`}>
-      <div className="meta">{microphone ? "You · Microphone" : "System audio"}</div>
-      <div className="bubble">
-        {event.chunks.map((chunk) => chunk.text).join(" ")}
-        {provisional && (
-          <span className="typing" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-          </span>
-        )}
-      </div>
-    </article>
+    <>
+      {event.chunks.map((chunk, index) => (
+        <article className={`message left${provisional ? " provisional" : ""}`} key={`${chunk.speaker}-${index}`}>
+          <div className="meta">Speaker {chunk.speaker}</div>
+          <div className="bubble">
+            {chunk.text}
+            {provisional && (
+              <span className="typing" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
+            )}
+          </div>
+        </article>
+      ))}
+    </>
   );
 }

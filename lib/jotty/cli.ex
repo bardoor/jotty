@@ -2,6 +2,7 @@ defmodule Jotty.CLI do
   @moduledoc false
 
   alias Jotty.Desktop.Server
+  alias Jotty.Recording
 
   @spec main([String.t()]) :: no_return()
   def main(arguments) do
@@ -92,15 +93,14 @@ defmodule Jotty.CLI do
 
     with {:ok, api_key} <- fetch_api_key(),
          {:ok, recorder} <- native_recorder() do
-      record = fn event_sink ->
-        Jotty.record(home, recorder, api_key, DateTime.utc_now(),
-          realtime: true,
-          recorder_stop: :message,
-          event_sink: event_sink
-        )
-      end
+      session_options = [
+        api_key: api_key,
+        recorder: recorder,
+        recorder_options: [stop: :message],
+        recording: fn -> Recording.create!(home, DateTime.utc_now()) end
+      ]
 
-      Server.start(record: record, port: port)
+      Server.start(session_options: session_options, port: port)
     end
   end
 
@@ -157,7 +157,6 @@ defmodule Jotty.CLI do
     "could not stop native recorder (status #{status}): #{output}"
   end
 
-  defp format_error({:ffmpeg, output}), do: "FFmpeg failed: #{output}"
   defp format_error({:codex, output}), do: "Codex failed: #{output}"
   defp format_error({:transcript_not_found, path}), do: "transcript not found at #{path}"
 

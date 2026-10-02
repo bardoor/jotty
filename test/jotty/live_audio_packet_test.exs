@@ -5,8 +5,7 @@ defmodule Jotty.LiveAudioPacketTest do
 
   test "decodes every valid packet" do
     assert {:ok, :ready} = LiveAudioPacket.decode(<<1>>)
-    assert {:ok, {:pcm, :system, <<1, 2>>}} = LiveAudioPacket.decode(<<2, 1, 2>>)
-    assert {:ok, {:pcm, :microphone, <<3, 4>>}} = LiveAudioPacket.decode(<<3, 3, 4>>)
+    assert {:ok, {:pcm, <<1, 2>>}} = LiveAudioPacket.decode(<<2, 1, 2>>)
 
     for {source_byte, source} <- [{1, :system}, {2, :microphone}],
         {reason_byte, reason} <- [{1, :conversion}, {2, :queue_overflow}, {3, :packet_output}] do
@@ -18,6 +17,7 @@ defmodule Jotty.LiveAudioPacketTest do
   test "rejects packets outside the native protocol" do
     assert {:error, :invalid_packet} = LiveAudioPacket.decode(<<>>)
     assert {:error, :invalid_packet} = LiveAudioPacket.decode(<<5>>)
+    assert {:error, :invalid_packet} = LiveAudioPacket.decode(<<3, 3, 4>>)
     assert {:error, :invalid_packet} = LiveAudioPacket.decode(<<4, 3, 1>>)
   end
 end

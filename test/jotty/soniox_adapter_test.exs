@@ -24,7 +24,10 @@ defmodule Jotty.STT.Soniox.AdapterTest do
               :endpoint
             ]} = Adapter.decode(payload)
 
-    assert :finished = Adapter.decode(~s({"finished":true}))
+    assert :finished =
+             Adapter.decode(
+               ~s({"tokens":[],"final_audio_proc_ms":1560,"total_audio_proc_ms":1680,"finished":true})
+             )
 
     assert {:error, {:provider_error, 400, "invalid_request"}} =
              Adapter.decode(~s({"error_code":400,"error_type":"invalid_request"}))

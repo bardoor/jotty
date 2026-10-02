@@ -3,17 +3,22 @@ defmodule Jotty.Desktop.Socket do
 
   @behaviour WebSock
 
-  alias Jotty.Desktop.{Controller, Protocol}
+  require Logger
+
+  alias Jotty.Desktop.Protocol
+  alias Jotty.Session.Server
 
   @impl WebSock
-  def init(controller) do
-    snapshot = Controller.attach(controller, self())
-    {:push, {:text, Protocol.encode_event(snapshot)}, %{controller: controller}}
+  def init(session) do
+    Logger.metadata(session_id: inspect(session))
+    Logger.info("connected", scope: :desktop)
+    snapshot = Server.attach(session, self())
+    {:push, {:text, Protocol.encode_event(snapshot)}, %{session: session}}
   end
 
   @impl WebSock
   def handle_in({payload, opcode: :text}, state) do
-    run(Protocol.decode!(payload), state.controller)
+    run(Protocol.decode!(payload), state.session)
     {:ok, state}
   end
 
@@ -22,6 +27,18 @@ defmodule Jotty.Desktop.Socket do
     {:push, {:text, Protocol.encode_event(event)}, state}
   end
 
-  defp run(:start, controller), do: :ok = Controller.start_recording(controller)
-  defp run(:stop, controller), do: :ok = Controller.stop_recording(controller)
+  @impl WebSock
+  def terminate(reason, _state) do
+    Logger.info("disconnected", scope: :desktop, reason: inspect(reason))
+  end
+
+  defp run(:start, session) do
+    Logger.info("start_requested", scope: :desktop)
+    :ok = Server.start_recording(session)
+  end
+
+  defp run(:stop, session) do
+    Logger.info("stop_requested", scope: :desktop)
+    :ok = Server.stop_recording(session)
+  end
 end

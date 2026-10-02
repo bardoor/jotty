@@ -21,6 +21,15 @@ defmodule Jotty.FakeSonioxTransport do
     end
   end
 
+  def finish(pid) do
+    reference = make_ref()
+    send(pid, {:finish, self(), reference})
+
+    receive do
+      {^reference, result} -> result
+    end
+  end
+
   def stop(pid) do
     send(pid, :stop)
     :ok
@@ -33,6 +42,13 @@ defmodule Jotty.FakeSonioxTransport do
         result = if fail_send?, do: {:error, :send_failed}, else: :ok
         send(sender, {reference, result})
         auto_response(owner, source, binary, result, auto_transcribe?)
+        loop(test_pid, owner, source, fail_send?, auto_transcribe?)
+
+      {:finish, sender, reference} ->
+        send(test_pid, {:transport_finished, self(), source})
+        result = if fail_send?, do: {:error, :send_failed}, else: :ok
+        send(sender, {reference, result})
+        auto_response(owner, source, <<>>, result, auto_transcribe?)
         loop(test_pid, owner, source, fail_send?, auto_transcribe?)
 
       :stop ->
@@ -71,8 +87,11 @@ defmodule Jotty.FakeSonioxTransport do
   end
 
   defp auto_response(owner, source, <<>>, :ok, true) do
-    send(owner, {:soniox_transport, source, {:text, ~s({"finished":true})}})
-    send(owner, {:soniox_transport, source, :closed})
+    send(owner, {
+      :soniox_transport,
+      source,
+      {:text, ~s({"tokens":[],"final_audio_proc_ms":100,"total_audio_proc_ms":100,"finished":true})}
+    })
   end
 
   defp auto_response(_owner, _source, _binary, _result, _auto_transcribe?), do: :ok

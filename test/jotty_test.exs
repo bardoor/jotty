@@ -4,21 +4,34 @@ defmodule JottyTest do
   import ExUnit.CaptureIO
 
   alias Jotty.Recording
-  alias Jotty.Session.UtteranceCompleted
+  alias Jotty.Session.Events.UtteranceCompleted
 
   @tag :tmp_dir
-  test "records, mixes, transcribes, and summarizes one call", %{tmp_dir: home} do
-    recorder = fake_recorder!(home)
+  test "records, transcribes one realtime mix, and summarizes one call", %{tmp_dir: home} do
+    recorder = fake_live_recorder!(home)
     fake_codex!(home)
-    stub_soniox()
 
-    assert {:ok, %Recording{} = recording} =
-             Jotty.record(home, recorder, "soniox-key", ~U[2026-09-21 17:45:00Z])
+    result =
+      capture_io("\n", fn ->
+        send(
+          self(),
+          {:result,
+           Jotty.record(home, recorder, "soniox-key", ~U[2026-09-21 17:45:00Z],
+             session_options: [
+               transport: Jotty.FakeSonioxTransport,
+               transport_options: [test_pid: self(), auto_transcribe: true],
+               shutdown_timeout: 1_000
+             ]
+           )}
+        )
+      end)
 
+    assert result =~ "Press Enter to stop recording"
+    assert_receive {:result, {:ok, %Recording{} = recording}}
     assert File.exists?(recording.system_audio)
     assert File.exists?(recording.microphone_audio)
-    assert File.exists?(recording.mixed_audio)
-    assert File.read!(recording.transcript) == "Speaker 1: We approved the release."
+    refute File.exists?(Path.join(recording.directory, "audio.m4a"))
+    assert File.read!(recording.transcript) == "Speaker 1: What does the project use?"
     assert File.read!(recording.summary) == "# Summary\nRelease approved.\n"
   end
 
@@ -28,7 +41,6 @@ defmodule JottyTest do
     context_directory = Path.join(home, "project")
     File.mkdir_p!(context_directory)
     fake_codex!(home)
-    stub_soniox()
 
     result =
       capture_io("\n", fn ->
@@ -50,8 +62,8 @@ defmodule JottyTest do
     assert_receive {:result, {:ok, %Recording{} = recording}}
     assert File.exists?(recording.system_audio)
     assert File.exists?(recording.microphone_audio)
-    assert File.exists?(recording.mixed_audio)
-    assert File.read!(recording.transcript) == "Speaker 1: We approved the release."
+    refute File.exists?(Path.join(recording.directory, "audio.m4a"))
+    assert File.read!(recording.transcript) == "Speaker 1: What does the project use?"
     assert File.read!(recording.summary) == "# Summary\nRelease approved.\n"
 
     assistant = File.read!(Path.join(recording.directory, "assistant.md"))
@@ -63,13 +75,11 @@ defmodule JottyTest do
   test "records with realtime transcription without project context", %{tmp_dir: home} do
     recorder = fake_live_recorder!(home)
     fake_codex!(home)
-    stub_soniox()
     receiver = self()
 
     task =
       Task.async(fn ->
         Jotty.record(home, recorder, "soniox-key", ~U[2026-09-21 19:00:00Z],
-          realtime: true,
           recorder_stop: :message,
           event_sink: receiver,
           session_options: [
@@ -84,49 +94,13 @@ defmodule JottyTest do
       if Process.alive?(task.pid), do: Process.exit(task.pid, :kill)
     end)
 
-    assert_receive {:jotty_session_event, %UtteranceCompleted{source: :system}}, 1_000
+    assert_receive {:jotty_session_event, %UtteranceCompleted{}}, 1_000
     send(task.pid, :stop)
 
     assert {:ok, %Recording{} = recording} = Task.await(task, 5_000)
-    assert File.read!(recording.transcript) == "Speaker 1: We approved the release."
+    assert File.read!(recording.transcript) == "Speaker 1: What does the project use?"
     assert File.read!(recording.summary) == "# Summary\nRelease approved.\n"
     refute File.exists?(Path.join(recording.directory, "assistant.md"))
-  end
-
-  defp stub_soniox do
-    Req.Test.stub(Jotty.Soniox, fn conn ->
-      case {conn.method, conn.request_path} do
-        {"POST", "/v1/files"} ->
-          Req.Test.json(conn, %{"id" => "file-1"})
-
-        {"POST", "/v1/transcriptions"} ->
-          Req.Test.json(conn, %{"id" => "transcription-1"})
-
-        {"GET", "/v1/transcriptions/transcription-1"} ->
-          Req.Test.json(conn, %{"status" => "completed"})
-
-        {"GET", "/v1/transcriptions/transcription-1/transcript"} ->
-          Req.Test.json(conn, %{
-            "tokens" => [%{"speaker" => "1", "text" => "We approved the release."}]
-          })
-
-        {"DELETE", _path} ->
-          Req.Test.text(conn, "")
-      end
-    end)
-  end
-
-  defp fake_recorder!(home) do
-    path = Path.join(home, "recorder")
-
-    File.write!(path, """
-    #!/bin/sh
-    ffmpeg -v error -f lavfi -i sine=frequency=440:duration=0.1 -c:a aac "$1/system.m4a"
-    ffmpeg -v error -f lavfi -i sine=frequency=880:duration=0.1 -c:a aac "$1/microphone.m4a"
-    """)
-
-    File.chmod!(path, 0o755)
-    path
   end
 
   defp fake_live_recorder!(home) do
@@ -155,7 +129,6 @@ defmodule JottyTest do
     signal.signal(signal.SIGINT, stop)
     packet(bytes([1]))
     packet(bytes([2, 1, 2]))
-    packet(bytes([3, 3, 4]))
 
     while True:
         time.sleep(1)

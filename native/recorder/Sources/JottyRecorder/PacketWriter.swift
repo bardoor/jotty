@@ -1,23 +1,15 @@
+import Darwin
 import Foundation
 
 protocol PacketWriting: Sendable {
   func writeReady() throws
-  func writePCM(_ pcm: Data, source: LiveAudioSource) throws
+  func writePCM(_ pcm: Data) throws
   func writeFailure(source: LiveAudioSource, reason: LiveAudioFailureReason) throws
 }
 
-enum LiveAudioSource: UInt8, Sendable, Equatable {
+enum LiveAudioSource: UInt8, CaseIterable, Sendable, Equatable {
   case system = 0x01
   case microphone = 0x02
-
-  var packetKind: UInt8 {
-    switch self {
-    case .system:
-      0x02
-    case .microphone:
-      0x03
-    }
-  }
 }
 
 enum LiveAudioFailureReason: UInt8, Sendable, Equatable {
@@ -27,21 +19,31 @@ enum LiveAudioFailureReason: UInt8, Sendable, Equatable {
 }
 
 final class PacketWriter: PacketWriting, @unchecked Sendable {
-  private let output: FileHandle
+  struct WriteError: Error {
+    let code: Int32
+  }
+
+  private let outputDescriptor: Int32
   private let lock = NSLock()
 
   init(output: FileHandle) {
-    self.output = output
+    self.outputDescriptor = output.fileDescriptor
+    signal(SIGPIPE, SIG_IGN)
+  }
+
+  init(outputDescriptor: Int32) {
+    self.outputDescriptor = outputDescriptor
+    signal(SIGPIPE, SIG_IGN)
   }
 
   func writeReady() throws {
     try write(payload: Data([0x01]))
   }
 
-  func writePCM(_ pcm: Data, source: LiveAudioSource) throws {
+  func writePCM(_ pcm: Data) throws {
     precondition(!pcm.isEmpty)
 
-    var payload = Data([source.packetKind])
+    var payload = Data([0x02])
     payload.append(pcm)
     try write(payload: payload)
   }
@@ -60,6 +62,23 @@ final class PacketWriter: PacketWriting, @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
 
-    try output.write(contentsOf: packet)
+    try write(packet)
+  }
+
+  private func write(_ data: Data) throws {
+    try data.withUnsafeBytes { bytes in
+      guard let baseAddress = bytes.baseAddress else { return }
+      var written = 0
+
+      while written < bytes.count {
+        let count = Darwin.write(outputDescriptor, baseAddress.advanced(by: written), bytes.count - written)
+
+        if count > 0 {
+          written += count
+        } else if count < 0 && errno != EINTR {
+          throw WriteError(code: errno)
+        }
+      }
+    }
   }
 }

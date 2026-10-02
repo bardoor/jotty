@@ -3,25 +3,6 @@ import CoreGraphics
 import Darwin
 import Foundation
 
-final class InterruptWaiter: @unchecked Sendable {
-  private var source: DispatchSourceSignal?
-
-  func wait() async {
-    await withCheckedContinuation { continuation in
-      signal(SIGINT, SIG_IGN)
-
-      let source = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-      source.setEventHandler { [weak self] in
-        self?.source?.cancel()
-        self?.source = nil
-        continuation.resume()
-      }
-      self.source = source
-      source.resume()
-    }
-  }
-}
-
 @main
 struct JottyRecorderCommand {
   static func main() async {
@@ -36,8 +17,13 @@ struct JottyRecorderCommand {
       let paths = try RecordingPaths(directoryPath: arguments.outputDirectory)
       try await ensurePermissions()
 
+      let terminationWaiter = TerminationWaiter()
       let packetWriter = PacketWriter(output: .standardOutput)
-      let recorder = Recorder(paths: paths, liveOutput: arguments.live ? packetWriter : nil)
+      let recorder = Recorder(
+        paths: paths,
+        liveOutput: arguments.live ? packetWriter : nil,
+        onFailure: { terminationWaiter.fail($0) }
+      )
       try await recorder.start()
 
       do {
@@ -49,7 +35,12 @@ struct JottyRecorderCommand {
 
       writeError("Recording system audio and default microphone. Press Ctrl-C to stop.")
 
-      await InterruptWaiter().wait()
+      do {
+        try await terminationWaiter.wait()
+      } catch {
+        try? await recorder.stop()
+        throw error
+      }
 
       writeError("Stopping recording...")
       try await recorder.stop()
@@ -90,7 +81,12 @@ struct JottyRecorderCommand {
   }
 
   private static func writeError(_ message: String) {
-    FileHandle.standardError.write(Data("\(message)\n".utf8))
+    let data = Data("\(message)\n".utf8)
+
+    data.withUnsafeBytes { bytes in
+      guard let baseAddress = bytes.baseAddress else { return }
+      _ = Darwin.write(STDERR_FILENO, baseAddress, bytes.count)
+    }
   }
 }
 

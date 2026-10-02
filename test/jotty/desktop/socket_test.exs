@@ -1,29 +1,61 @@
 defmodule Jotty.Desktop.SocketTest do
   use ExUnit.Case, async: true
 
-  alias Jotty.Desktop.{Controller, Socket}
+  import ExUnit.CaptureLog
 
-  test "sends the current snapshot and routes commands and events" do
-    record = fn _event_sink ->
-      receive do: (:stop -> {:error, :stopped})
-    end
+  alias Jotty.Desktop.Socket
+  alias Jotty.Recording
+  alias Jotty.Session.Server
 
-    {:ok, controller} = Controller.start_link(record: record)
+  @tag :tmp_dir
+  test "sends the current snapshot and forwards presentation events", %{tmp_dir: directory} do
+    recording = %Recording{
+      directory: directory,
+      system_audio: Path.join(directory, "system.m4a"),
+      microphone_audio: Path.join(directory, "microphone.m4a"),
+      transcript: Path.join(directory, "transcript.txt"),
+      summary: Path.join(directory, "summary.md")
+    }
 
-    assert {:push, {:text, snapshot}, %{controller: ^controller} = state} = Socket.init(controller)
+    {:ok, session} =
+      Server.start_link(api_key: "test-key", recorder: "/unused", recording: recording)
+
+    assert {:push, {:text, snapshot}, %{session: ^session} = state} = Socket.init(session)
     assert %{"type" => "snapshot", "status" => "idle"} = Jason.decode!(snapshot)
 
-    assert {:ok, ^state} = Socket.handle_in({~s({"type":"start"}), opcode: :text}, state)
-    assert_receive {:jotty_desktop_event, %{type: :state, status: :starting} = event}
+    event = %{type: :state, status: :starting}
 
     assert {:push, {:text, encoded_event}, ^state} =
              Socket.handle_info({:jotty_desktop_event, event}, state)
 
     assert Jason.decode!(encoded_event) == %{"type" => "state", "status" => "starting"}
+    GenServer.stop(session)
+  end
 
-    send(controller, {:jotty_session_event, :recording_started})
-    assert_receive {:jotty_desktop_event, %{type: :state, status: :recording}}
+  @tag :tmp_dir
+  test "logs the desktop connection with the session correlation", %{tmp_dir: directory} do
+    recording = %Recording{
+      directory: directory,
+      system_audio: Path.join(directory, "system.m4a"),
+      microphone_audio: Path.join(directory, "microphone.m4a"),
+      transcript: Path.join(directory, "transcript.txt"),
+      summary: Path.join(directory, "summary.md")
+    }
 
-    assert {:ok, ^state} = Socket.handle_in({~s({"type":"stop"}), opcode: :text}, state)
+    {:ok, session} = Server.start_link(api_key: "test-key", recorder: "/unused", recording: recording)
+
+    log =
+      capture_log([metadata: [:scope, :session_id, :reason]], fn ->
+        assert {:push, {:text, _snapshot}, state} = Socket.init(session)
+        assert :ok = Socket.terminate(:closed, state)
+        Logger.flush()
+      end)
+
+    assert log =~ "connected"
+    assert log =~ "disconnected"
+    assert log =~ "scope=desktop"
+    assert log =~ "session_id=#{inspect(session)}"
+    assert log =~ "reason=:closed"
+    GenServer.stop(session)
   end
 end

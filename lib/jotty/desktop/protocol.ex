@@ -1,7 +1,8 @@
 defmodule Jotty.Desktop.Protocol do
   @moduledoc false
 
-  alias Jotty.Session.{TranscriptionPreviewed, UtteranceCompleted}
+  alias Jotty.Session.Events.{TranscriptionPreviewed, UtteranceCompleted}
+  alias Jotty.Session.Presentation.Snapshot
 
   @spec decode!(String.t()) :: :start | :stop
   def decode!(payload) do
@@ -10,7 +11,7 @@ defmodule Jotty.Desktop.Protocol do
     |> command()
   end
 
-  @spec encode_event(TranscriptionPreviewed.t() | UtteranceCompleted.t() | map()) :: String.t()
+  @spec encode_event(TranscriptionPreviewed.t() | UtteranceCompleted.t() | Snapshot.t() | map()) :: String.t()
   def encode_event(%TranscriptionPreviewed{} = event) do
     event
     |> transcription_payload("transcription_previewed")
@@ -23,13 +24,14 @@ defmodule Jotty.Desktop.Protocol do
     |> Jason.encode!()
   end
 
-  def encode_event(%{type: :snapshot} = snapshot) do
+  def encode_event(%Snapshot{} = snapshot) do
     snapshot
+    |> Map.from_struct()
     |> Map.update!(
       :utterances,
       &Enum.map(&1, fn event -> transcription_payload(event, "utterance_completed") end)
     )
-    |> Map.update!(:previews, &Map.new(&1, fn {source, event} -> {source, preview_payload(event)} end))
+    |> Map.update!(:preview, &preview_payload/1)
     |> Jason.encode!()
   end
 
@@ -43,7 +45,6 @@ defmodule Jotty.Desktop.Protocol do
   defp transcription_payload(event, type) do
     %{
       type: type,
-      source: event.source,
       chunks: Enum.map(event.chunks, &Map.from_struct/1)
     }
   end

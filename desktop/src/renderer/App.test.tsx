@@ -37,7 +37,7 @@ describe("App", () => {
         type: "snapshot",
         status: "idle",
         utterances: [],
-        previews: { system: null, microphone: null },
+        preview: null,
         realtime_error: null,
         summary: null,
         recording_directory: null
@@ -65,20 +65,18 @@ describe("App", () => {
         type: "snapshot",
         status: "recording",
         utterances: [],
-        previews: { system: null, microphone: null },
+        preview: null,
         realtime_error: null,
         summary: null,
         recording_directory: null
       });
       connection.emit({
         type: "utterance_completed",
-        source: "system",
         chunks: [{ speaker: "1", text: "System message", start_ms: 0, end_ms: 10 }]
       });
       connection.emit({
         type: "transcription_previewed",
-        source: "microphone",
-        chunks: [{ speaker: "1", text: "Draft reply", start_ms: 10, end_ms: 20 }]
+        chunks: [{ speaker: "2", text: "Draft reply", start_ms: 10, end_ms: 20 }]
       });
     });
 
@@ -120,7 +118,6 @@ describe("App", () => {
     act(() => {
       connection.emit({
         type: "utterance_completed",
-        source: "system",
         chunks: [{ speaker: "1", text: "Newest message", start_ms: 20, end_ms: 30 }]
       });
     });

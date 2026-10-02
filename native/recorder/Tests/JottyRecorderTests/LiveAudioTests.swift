@@ -33,7 +33,7 @@ private final class SlowConverter: PCMConverting, @unchecked Sendable {
 private final class RecordingPacketWriter: PacketWriting, @unchecked Sendable {
   enum Event: Equatable {
     case ready
-    case pcm(Data, LiveAudioSource)
+    case pcm(Data)
     case failure(LiveAudioSource, LiveAudioFailureReason)
   }
 
@@ -50,8 +50,8 @@ private final class RecordingPacketWriter: PacketWriting, @unchecked Sendable {
     append(.ready)
   }
 
-  func writePCM(_ pcm: Data, source: LiveAudioSource) throws {
-    append(.pcm(pcm, source))
+  func writePCM(_ pcm: Data) throws {
+    append(.pcm(pcm))
   }
 
   func writeFailure(source: LiveAudioSource, reason: LiveAudioFailureReason) throws {
@@ -76,7 +76,7 @@ private final class FailingPCMWriter: PacketWriting, @unchecked Sendable {
     try recorder.writeReady()
   }
 
-  func writePCM(_ pcm: Data, source: LiveAudioSource) throws {
+  func writePCM(_ pcm: Data) throws {
     throw TestFailure.expected
   }
 
@@ -96,6 +96,32 @@ private final class FixedConverter: PCMConverting, @unchecked Sendable {
 }
 
 struct LiveAudioTests {
+  @Test
+  func mixesSystemAndMicrophonePCMIntoOneSaturatingStream() throws {
+    let packetWriter = RecordingPacketWriter()
+    let mixer = LiveAudioMixer(packetWriter: packetWriter)
+
+    try mixer.append(pcm([1_000, 30_000]), source: .system)
+    #expect(packetWriter.events.isEmpty)
+
+    try mixer.append(pcm([2_000, 10_000]), source: .microphone)
+
+    #expect(packetWriter.events == [.pcm(pcm([3_000, Int16.max]))])
+  }
+
+  @Test
+  func flushesTheLongerSourceWithSilenceAfterBothSourcesFinish() throws {
+    let packetWriter = RecordingPacketWriter()
+    let mixer = LiveAudioMixer(packetWriter: packetWriter)
+
+    try mixer.append(pcm([1_000, 2_000]), source: .system)
+    try mixer.append(pcm([3_000]), source: .microphone)
+    try mixer.finish(source: .microphone)
+    try mixer.finish(source: .system)
+
+    #expect(packetWriter.events == [.pcm(pcm([4_000])), .pcm(pcm([2_000]))])
+  }
+
   @Test
   func convertsSyntheticAudioToMono16KHzSigned16BitPCM() throws {
     let sampleBuffer = try syntheticSampleBuffer(frameCount: 480)
@@ -119,12 +145,13 @@ struct LiveAudioTests {
   }
 
   @Test
-  func conversionFailureDisablesOnlyThatSourceAndEmitsOneFailure() throws {
+  func conversionFailureDisablesSharedRealtimeOutputAndEmitsOneFailure() throws {
     let packetWriter = RecordingPacketWriter()
+    let mixer = LiveAudioMixer(packetWriter: packetWriter)
     let emitter = LiveAudioEmitter(
       source: .system,
       converter: FailingConverter(),
-      packetWriter: packetWriter
+      mixer: mixer
     )
     let sampleBuffer = try syntheticSampleBuffer(frameCount: 480)
 
@@ -140,35 +167,44 @@ struct LiveAudioTests {
   func slowConversionProcessesEverySequentialSample() throws {
     let converter = SlowConverter()
     let packetWriter = RecordingPacketWriter()
+    let mixer = LiveAudioMixer(packetWriter: packetWriter)
     let emitter = LiveAudioEmitter(
       source: .microphone,
       converter: converter,
-      packetWriter: packetWriter
+      mixer: mixer
     )
     let sampleBuffer = try syntheticSampleBuffer(frameCount: 480)
+    try mixer.append(Data(repeating: 0, count: 8), source: .system)
 
     for _ in 1 ... 4 {
       emitter.process(sampleBuffer)
     }
     emitter.finish()
 
-    #expect(packetWriter.events == Array(repeating: .pcm(Data([0x00, 0x00]), .microphone), count: 4))
+    #expect(packetWriter.events == Array(repeating: .pcm(Data([0x00, 0x00])), count: 4))
   }
 
   @Test
-  func packetOutputFailureDisablesOnlyThatSourceAndEmitsOneFailure() throws {
+  func packetOutputFailureDisablesSharedRealtimeOutputAndEmitsOneFailure() throws {
     let packetWriter = FailingPCMWriter()
-    let emitter = LiveAudioEmitter(
+    let mixer = LiveAudioMixer(packetWriter: packetWriter)
+    let microphoneEmitter = LiveAudioEmitter(
+      source: .microphone,
+      converter: FixedConverter(),
+      mixer: mixer
+    )
+    let systemEmitter = LiveAudioEmitter(
       source: .system,
       converter: FixedConverter(),
-      packetWriter: packetWriter
+      mixer: mixer
     )
     let sampleBuffer = try syntheticSampleBuffer(frameCount: 480)
 
-    emitter.process(sampleBuffer)
-    emitter.finish()
-    emitter.process(sampleBuffer)
-    emitter.finish()
+    microphoneEmitter.process(sampleBuffer)
+    systemEmitter.process(sampleBuffer)
+    systemEmitter.finish()
+    systemEmitter.process(sampleBuffer)
+    systemEmitter.finish()
 
     #expect(packetWriter.events == [.failure(.system, .packetOutput)])
   }
@@ -181,10 +217,11 @@ struct LiveAudioTests {
     defer { try? FileManager.default.removeItem(at: directory) }
 
     let packetWriter = RecordingPacketWriter()
+    let mixer = LiveAudioMixer(packetWriter: packetWriter)
     let emitter = LiveAudioEmitter(
       source: .system,
       converter: FailingConverter(),
-      packetWriter: packetWriter
+      mixer: mixer
     )
     let outputURL = directory.appending(path: "system.m4a")
     let output = AudioStreamOutput(
@@ -274,4 +311,8 @@ private func syntheticSampleBuffer(frameCount: AVAudioFrameCount) throws -> CMSa
   }
 
   return sampleBuffer
+}
+
+private func pcm(_ samples: [Int16]) -> Data {
+  samples.withUnsafeBytes { Data($0) }
 }

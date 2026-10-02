@@ -36,9 +36,9 @@ defmodule Jotty.RecorderTest do
   end
 
   @tag :tmp_dir
-  test "opts into live output and routes each closed source packet", %{tmp_dir: directory} do
+  test "opts into live output and routes the mixed packet", %{tmp_dir: directory} do
     executable = Path.join(directory, "recorder")
-    write_fake_recorder(executable, [<<1>>, <<2, 1, 2>>, <<3, 3, 4>>, <<4, 2, 1>>])
+    write_fake_recorder(executable, [<<1>>, <<2, 1, 2>>, <<4, 2, 1>>])
     receiver = self()
 
     capture_io("\n", fn ->
@@ -46,8 +46,7 @@ defmodule Jotty.RecorderTest do
     end)
 
     assert_receive {:live, :ready}
-    assert_receive {:live, {:pcm, :system, <<1, 2>>}}
-    assert_receive {:live, {:pcm, :microphone, <<3, 4>>}}
+    assert_receive {:live, {:pcm, <<1, 2>>}}
     assert_receive {:live, {:live_source_failed, :microphone, :conversion}}
     assert File.read!(Path.join(directory, "arguments")) == "--live\n#{directory}\n"
   end
@@ -69,6 +68,73 @@ defmodule Jotty.RecorderTest do
     assert :ok = Task.await(task)
     assert File.exists?(Path.join(directory, "system.m4a"))
     assert File.exists?(Path.join(directory, "microphone.m4a"))
+  end
+
+  @tag :tmp_dir
+  test "terminates a native recorder that never becomes ready", %{tmp_dir: directory} do
+    executable = Path.join(directory, "recorder")
+
+    File.write!(executable, """
+    #!/bin/sh
+    printf '%s' "$$" > "$2/pid"
+    exec /bin/sleep 600
+    """)
+
+    File.chmod!(executable, 0o755)
+
+    assert {:error, :recorder_start_timeout} =
+             Recorder.record_live(executable, directory, fn _event -> :ok end,
+               startup_timeout: 2_000,
+               termination_timeout: 20
+             )
+
+    pid = directory |> Path.join("pid") |> File.read!() |> String.trim()
+    assert {_, 1} = System.cmd("/bin/kill", ["-0", pid], stderr_to_stdout: true)
+  end
+
+  @tag :tmp_dir
+  test "kills a native recorder that ignores graceful stop", %{tmp_dir: directory} do
+    executable = Path.join(directory, "recorder")
+
+    File.write!(executable, """
+    #!/usr/bin/python3
+    import os
+    import pathlib
+    import signal
+    import struct
+    import sys
+    import time
+
+    pathlib.Path(sys.argv[-1], "pid").write_text(str(os.getpid()))
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    payload = bytes([1])
+    sys.stdout.buffer.write(struct.pack(">I", len(payload)) + payload)
+    sys.stdout.buffer.flush()
+    while True:
+        sys.stdout.buffer.write(struct.pack(">I", len(payload)) + payload)
+        sys.stdout.buffer.flush()
+        time.sleep(0.005)
+    """)
+
+    File.chmod!(executable, 0o755)
+    receiver = self()
+
+    task =
+      Task.async(fn ->
+        Recorder.record_live(executable, directory, &send(receiver, {:live, &1}),
+          stop: :message,
+          stop_timeout: 20,
+          termination_timeout: 20
+        )
+      end)
+
+    assert_receive {:live, :ready}, 1_000
+    send(task.pid, :stop)
+    assert {:error, :recorder_stop_timeout} = Task.await(task)
+
+    pid = directory |> Path.join("pid") |> File.read!() |> String.trim()
+    assert {_, 1} = System.cmd("/bin/kill", ["-0", pid], stderr_to_stdout: true)
   end
 
   @tag :tmp_dir

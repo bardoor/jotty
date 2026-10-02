@@ -1,16 +1,11 @@
 defmodule Jotty do
-  @moduledoc """
-  Runs the complete local recording, transcription, and summary workflow.
-  """
+  @moduledoc "Runs one event-driven recording session."
 
-  alias Jotty.{Assistant, Audio, Recorder, Recording, Session, Soniox, Summarizer}
+  alias Jotty.Recording
+  alias Jotty.Session.Events.{RecordingStarted, SessionCompleted, SessionFailed}
+  alias Jotty.Session.Server
 
-  @doc """
-  Processes one recording sequentially and leaves every completed local artifact
-  in its timestamped directory if a later stage fails.
-  """
-  @spec record(Path.t(), Path.t(), String.t(), DateTime.t()) ::
-          {:ok, Recording.t()} | {:error, term()}
+  @spec record(Path.t(), Path.t(), String.t(), DateTime.t()) :: {:ok, Recording.t()} | {:error, term()}
   def record(home, recorder_executable, soniox_api_key, recorded_at) do
     record(home, recorder_executable, soniox_api_key, recorded_at, [])
   end
@@ -19,124 +14,51 @@ defmodule Jotty do
           {:ok, Recording.t()} | {:error, term()}
   def record(home, recorder_executable, soniox_api_key, recorded_at, options) do
     recording = Recording.create!(home, recorded_at)
-    contexts = Keyword.get(options, :contexts, [])
-    session_options = Keyword.get(options, :session_options, [])
-    realtime? = Keyword.get(options, :realtime, contexts != [])
+    external_sink = Keyword.get(options, :event_sink)
+    event_sinks = [self() | List.wrap(external_sink)] |> Enum.uniq()
 
-    if realtime? do
-      session_options = Keyword.put(session_options, :event_sink, Keyword.get(options, :event_sink))
-      recorder_options = [stop: Keyword.get(options, :recorder_stop, :stdio)]
-
-      execute_realtime_recording(
-        recording,
-        recorder_executable,
-        soniox_api_key,
-        contexts,
-        session_options,
-        recorder_options
+    session_options =
+      options
+      |> Keyword.get(:session_options, [])
+      |> Keyword.merge(
+        api_key: soniox_api_key,
+        contexts: Keyword.get(options, :contexts, []),
+        event_sinks: event_sinks,
+        recorder: recorder_executable,
+        recorder_options: [stop: :message],
+        recording: recording
       )
-    else
-      execute_recording(recording, recorder_executable, soniox_api_key)
+
+    with {:ok, session} <- Server.start_link(session_options),
+         :ok <- Server.start_recording(session) do
+      result = await_result(session, Keyword.get(options, :recorder_stop, :stdio))
+      GenServer.stop(session)
+      result
     end
   end
 
-  defp execute_recording(recording, recorder_executable, soniox_api_key) do
-    result = Recorder.record(recorder_executable, recording.directory)
-    post_process(result, recording, soniox_api_key)
-  end
+  defp await_result(session, stop_mode) do
+    receive do
+      {:jotty_session_event, %RecordingStarted{}} when stop_mode == :stdio ->
+        IO.gets("Press Enter to stop recording.\n")
+        :ok = Server.stop_recording(session)
+        await_result(session, :message)
 
-  defp execute_realtime_recording(
-         recording,
-         recorder_executable,
-         soniox_api_key,
-         contexts,
-         session_options,
-         recorder_options
-       ) do
-    assistant = start_assistant(recording.directory, contexts)
+      {:jotty_session_event, %RecordingStarted{}} ->
+        await_result(session, stop_mode)
 
-    record_realtime(
-      assistant,
-      recording,
-      recorder_executable,
-      soniox_api_key,
-      session_options,
-      recorder_options
-    )
-  end
+      {:jotty_session_event, %SessionCompleted{result: result}} ->
+        result
 
-  defp record_realtime(
-         {:ok, assistant},
-         recording,
-         recorder_executable,
-         soniox_api_key,
-         session_options,
-         recorder_options
-       ) do
-    options = Keyword.merge(session_options, api_key: soniox_api_key, assistant: assistant)
-    session = Session.start(options)
+      {:jotty_session_event, %SessionFailed{reason: reason}} ->
+        {:error, reason}
 
-    record_live(
-      session,
-      assistant,
-      recording,
-      recorder_executable,
-      soniox_api_key,
-      recorder_options
-    )
-  end
+      :stop ->
+        :ok = Server.stop_recording(session)
+        await_result(session, :message)
 
-  defp record_realtime(
-         {:error, reason},
-         _recording,
-         _recorder,
-         _api_key,
-         _session_options,
-         _recorder_options
-       ) do
-    {:error, reason}
-  end
-
-  defp record_live(
-         {:error, reason},
-         assistant,
-         _recording,
-         _recorder,
-         _api_key,
-         _recorder_options
-       ) do
-    disable_assistant(assistant)
-    {:error, reason}
-  end
-
-  defp record_live(
-         {:ok, session},
-         _assistant,
-         recording,
-         recorder,
-         api_key,
-         recorder_options
-       ) do
-    result = Session.record(recorder, recording.directory, session, recorder_options)
-    post_process(result, recording, api_key)
-  end
-
-  defp start_assistant(_directory, []), do: {:ok, nil}
-  defp start_assistant(directory, contexts), do: Assistant.start(directory, contexts)
-
-  defp disable_assistant(nil), do: :ok
-  defp disable_assistant(assistant), do: Assistant.disable(assistant)
-
-  defp post_process({:error, reason}, _recording, _soniox_api_key), do: {:error, reason}
-
-  defp post_process(:ok, recording, soniox_api_key) do
-    mixed = Audio.mix(recording.system_audio, recording.microphone_audio, recording.mixed_audio)
-
-    with :ok <- mixed,
-         {:ok, transcript} <- Soniox.transcribe(recording.mixed_audio, soniox_api_key),
-         :ok <- File.write(recording.transcript, transcript),
-         :ok <- Summarizer.summarize(recording.transcript, recording.summary) do
-      {:ok, recording}
+      {:jotty_session_event, _event} ->
+        await_result(session, stop_mode)
     end
   end
 end

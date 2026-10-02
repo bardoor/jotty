@@ -10,7 +10,6 @@ export interface TranscriptChunk {
 
 export interface TranscriptionEvent {
   type: "transcription_previewed" | "utterance_completed";
-  source: Source;
   chunks: TranscriptChunk[];
 }
 
@@ -18,7 +17,7 @@ export interface SnapshotEvent {
   type: "snapshot";
   status: Exclude<Status, "connecting">;
   utterances: TranscriptionEvent[];
-  previews: Record<Source, TranscriptionEvent | null>;
+  preview: TranscriptionEvent | null;
   realtime_error: string | null;
   summary: string | null;
   recording_directory: string | null;
@@ -57,7 +56,7 @@ export type ServerEvent =
 export interface DesktopState {
   status: Status;
   utterances: TranscriptionEvent[];
-  previews: Record<Source, TranscriptionEvent | null>;
+  preview: TranscriptionEvent | null;
   summary: string | null;
   recordingDirectory: string | null;
   realtimeError: string | null;
@@ -67,7 +66,7 @@ export interface DesktopState {
 export const initialState: DesktopState = {
   status: "connecting",
   utterances: [],
-  previews: { system: null, microphone: null },
+  preview: null,
   summary: null,
   recordingDirectory: null,
   realtimeError: null,
@@ -80,7 +79,7 @@ export function reduceServerEvent(state: DesktopState, event: ServerEvent): Desk
       return {
         status: event.status,
         utterances: event.utterances,
-        previews: event.previews,
+        preview: event.preview,
         realtimeError: event.realtime_error,
         summary: event.summary,
         recordingDirectory: event.recording_directory,
@@ -89,13 +88,13 @@ export function reduceServerEvent(state: DesktopState, event: ServerEvent): Desk
     case "transcription_previewed":
       return {
         ...state,
-        previews: { ...state.previews, [event.source]: event }
+        preview: event
       };
     case "utterance_completed":
       return {
         ...state,
         utterances: [...state.utterances, event],
-        previews: { ...state.previews, [event.source]: null }
+        preview: null
       };
     case "state":
       return { ...state, status: event.status, error: null };

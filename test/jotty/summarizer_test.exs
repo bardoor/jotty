@@ -15,13 +15,17 @@ defmodule Jotty.SummarizerTest do
     File.write!(transcript_path, "Speaker 1: We decided to ship on Friday.")
     File.write!(codex_path, fake_codex())
     File.chmod!(codex_path, 0o755)
+    File.mkdir!(Path.join(directory, "jotty-summary-1"))
 
     original_path = System.get_env("PATH")
+    original_tmp_dir = System.get_env("TMPDIR")
     System.put_env("PATH", "#{bin_directory}:#{original_path}")
+    System.put_env("TMPDIR", directory)
     System.put_env("JOTTY_CAPTURED_PROMPT", captured_prompt)
 
     on_exit(fn ->
       System.put_env("PATH", original_path)
+      restore_environment("TMPDIR", original_tmp_dir)
       System.delete_env("JOTTY_CAPTURED_PROMPT")
     end)
 
@@ -49,4 +53,7 @@ defmodule Jotty.SummarizerTest do
     /usr/bin/printf '# Summary\nEverything happened.\n' > "$output"
     """
   end
+
+  defp restore_environment(name, nil), do: System.delete_env(name)
+  defp restore_environment(name, value), do: System.put_env(name, value)
 end

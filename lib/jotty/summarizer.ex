@@ -3,13 +3,15 @@ defmodule Jotty.Summarizer do
   Produces a call summary through the locally authenticated Codex CLI.
   """
 
+  alias Jotty.TemporaryDirectory
+
   @doc """
   Reads a transcript and writes the final Markdown response returned by Codex.
   """
   @spec summarize(Path.t(), Path.t()) :: :ok | {:error, {:codex, String.t()}}
   def summarize(transcript_path, summary_path) do
     transcript = File.read!(transcript_path)
-    workspace = temporary_workspace()
+    workspace = TemporaryDirectory.create!("jotty-summary")
     prompt_path = Path.join(workspace, "prompt.txt")
     response_path = Path.join(workspace, "summary.md")
     File.write!(prompt_path, prompt(transcript))
@@ -62,16 +64,5 @@ defmodule Jotty.Summarizer do
     #{transcript}
     </transcript>
     """
-  end
-
-  defp temporary_workspace do
-    path =
-      Path.join(
-        System.tmp_dir!(),
-        "jotty-summary-#{System.unique_integer([:positive, :monotonic])}"
-      )
-
-    File.mkdir!(path)
-    path
   end
 end

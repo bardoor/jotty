@@ -7,6 +7,7 @@ defmodule Jotty.Assistant do
 
   require Logger
 
+  alias Jotty.TemporaryDirectory
   alias Jotty.Session.Events.UtteranceCompleted
   alias Jotty.STT.TranscriptionChunk
 
@@ -163,7 +164,7 @@ defmodule Jotty.Assistant do
   defp failure_stage({:hermes, _status, _output}), do: :retrieval
 
   defp classify(codex, history) do
-    workspace = temporary_workspace("classifier")
+    workspace = TemporaryDirectory.create!("jotty-classifier")
     prompt_path = Path.join(workspace, "prompt.txt")
     schema_path = Path.join(workspace, "schema.json")
     response_path = Path.join(workspace, "response.json")
@@ -340,16 +341,5 @@ defmodule Jotty.Assistant do
       "required" => ["decision"],
       "additionalProperties" => false
     }
-  end
-
-  defp temporary_workspace(name) do
-    path =
-      Path.join(
-        System.tmp_dir!(),
-        "jotty-#{name}-#{System.unique_integer([:positive, :monotonic])}"
-      )
-
-    File.mkdir!(path)
-    path
   end
 end

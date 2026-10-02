@@ -8,8 +8,8 @@ struct JottyRecorderCommand {
   static func main() async {
     signal(SIGPIPE, SIG_IGN)
 
-    guard let arguments = arguments() else {
-      writeError("Usage: jotty-recorder [--live] OUTPUT_DIRECTORY")
+    guard let arguments = RecorderArguments.parse(Array(CommandLine.arguments.dropFirst())) else {
+      writeError("Usage: jotty-recorder [--live | --aec-spike] OUTPUT_DIRECTORY")
       exit(EX_USAGE)
     }
 
@@ -19,9 +19,10 @@ struct JottyRecorderCommand {
 
       let terminationWaiter = TerminationWaiter()
       let packetWriter = PacketWriter(output: .standardOutput)
+      let liveMixer = try liveMixer(for: arguments.mode, paths: paths, packetWriter: packetWriter)
       let recorder = Recorder(
         paths: paths,
-        liveOutput: arguments.live ? packetWriter : nil,
+        liveMixer: liveMixer,
         onFailure: { terminationWaiter.fail($0) }
       )
       try await recorder.start()
@@ -45,20 +46,35 @@ struct JottyRecorderCommand {
       writeError("Stopping recording...")
       try await recorder.stop()
       writeError("Saved system.m4a and microphone.m4a")
+
+      if arguments.mode == .aecSpike {
+        writeError("Saved microphone-aec.wav")
+      }
     } catch {
       writeError("Error: \(error.localizedDescription)")
       exit(EXIT_FAILURE)
     }
   }
 
-  private static func arguments() -> (outputDirectory: String, live: Bool)? {
-    switch CommandLine.arguments.dropFirst() {
-    case let arguments where arguments.count == 1:
-      return (arguments[arguments.startIndex], false)
-    case let arguments where arguments.count == 2 && arguments.first == "--live":
-      return (arguments[arguments.index(after: arguments.startIndex)], true)
-    default:
+  private static func liveMixer(
+    for mode: RecorderArguments.Mode,
+    paths: RecordingPaths,
+    packetWriter: PacketWriting
+  ) throws -> LiveAudioMixing? {
+    switch mode {
+    case .archive:
       return nil
+    case .live:
+      return LiveAudioMixer(packetWriter: packetWriter)
+    case .aecSpike:
+      guard let libraryPath = ProcessInfo.processInfo.environment["JOTTY_AEC_LIBRARY_PATH"] else {
+        throw AECSpikeError.missingLibraryPath
+      }
+
+      return AECQualityCoordinator(
+        processor: try DynamicAECProcessor(libraryPath: libraryPath),
+        writer: try WaveFileWriter(outputURL: paths.aecMicrophoneAudio)
+      )
     }
   }
 
@@ -87,6 +103,14 @@ struct JottyRecorderCommand {
       guard let baseAddress = bytes.baseAddress else { return }
       _ = Darwin.write(STDERR_FILENO, baseAddress, bytes.count)
     }
+  }
+}
+
+enum AECSpikeError: Swift.Error, LocalizedError {
+  case missingLibraryPath
+
+  var errorDescription: String? {
+    "JOTTY_AEC_LIBRARY_PATH is required for --aec-spike"
   }
 }
 

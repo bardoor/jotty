@@ -1,9 +1,16 @@
+import CoreMedia
 import Foundation
 
 protocol LiveAudioMixing: Sendable {
-  func append(_ pcm: Data, source: LiveAudioSource) throws
+  func append(_ pcm: Data, source: LiveAudioSource, presentationTime: CMTime) throws
   func finish(source: LiveAudioSource) throws
   func fail(source: LiveAudioSource, reason: LiveAudioFailureReason)
+}
+
+extension LiveAudioMixing {
+  func append(_ pcm: Data, source: LiveAudioSource) throws {
+    try append(pcm, source: source, presentationTime: .invalid)
+  }
 }
 
 final class LiveAudioMixer: LiveAudioMixing, @unchecked Sendable {
@@ -21,7 +28,7 @@ final class LiveAudioMixer: LiveAudioMixing, @unchecked Sendable {
     self.packetWriter = packetWriter
   }
 
-  func append(_ pcm: Data, source: LiveAudioSource) throws {
+  func append(_ pcm: Data, source: LiveAudioSource, presentationTime: CMTime) throws {
     guard !pcm.isEmpty, pcm.count.isMultiple(of: MemoryLayout<Int16>.size) else {
       throw Error.invalidPCM
     }

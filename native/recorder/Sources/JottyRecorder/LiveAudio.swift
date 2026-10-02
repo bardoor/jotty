@@ -186,6 +186,7 @@ final class LiveAudioEmitter: @unchecked Sendable {
   private let mixer: LiveAudioMixing
   private let stateLock = NSLock()
   private var enabled = true
+  private var nextPresentationTime: CMTime?
 
   init(
     source: LiveAudioSource,
@@ -215,7 +216,14 @@ final class LiveAudioEmitter: @unchecked Sendable {
     }
 
     do {
-      try mixer.append(pcm, source: source)
+      try mixer.append(
+        pcm,
+        source: source,
+        presentationTime: presentationTime(
+          input: CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
+          byteCount: pcm.count
+        )
+      )
     } catch {
       fail(.packetOutput)
     }
@@ -236,7 +244,11 @@ final class LiveAudioEmitter: @unchecked Sendable {
 
     do {
       if !pcm.isEmpty {
-        try mixer.append(pcm, source: source)
+        try mixer.append(
+          pcm,
+          source: source,
+          presentationTime: presentationTime(input: nil, byteCount: pcm.count)
+        )
       }
 
       try mixer.finish(source: source)
@@ -249,6 +261,20 @@ final class LiveAudioEmitter: @unchecked Sendable {
     stateLock.lock()
     defer { stateLock.unlock() }
     return enabled
+  }
+
+  private func presentationTime(input: CMTime?, byteCount: Int) -> CMTime {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+
+    let start = nextPresentationTime ?? input ?? .invalid
+    guard start.isValid else {
+      return .invalid
+    }
+
+    let sampleCount = byteCount / MemoryLayout<Int16>.size
+    nextPresentationTime = start + CMTime(value: Int64(sampleCount), timescale: 16_000)
+    return start
   }
 
   private func disable() -> Bool {

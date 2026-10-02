@@ -1,0 +1,4 @@
+module JottyAEC {
+  header "AecBridge.h"
+  export *
+}

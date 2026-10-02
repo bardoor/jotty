@@ -15,6 +15,7 @@ struct RecordingPathsTests {
 
     #expect(paths.systemAudio == directory.appending(path: "system.m4a"))
     #expect(paths.microphoneAudio == directory.appending(path: "microphone.m4a"))
+    #expect(paths.aecMicrophoneAudio == directory.appending(path: "microphone-aec.wav"))
   }
 
   @Test

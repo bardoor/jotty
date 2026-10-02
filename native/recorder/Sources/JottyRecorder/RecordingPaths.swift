@@ -17,6 +17,7 @@ struct RecordingPaths {
 
   let systemAudio: URL
   let microphoneAudio: URL
+  let aecMicrophoneAudio: URL
 
   init(directoryPath: String) throws {
     var isDirectory: ObjCBool = false
@@ -41,5 +42,6 @@ struct RecordingPaths {
 
     self.systemAudio = systemAudio
     self.microphoneAudio = microphoneAudio
+    aecMicrophoneAudio = directory.appending(path: "microphone-aec.wav")
   }
 }

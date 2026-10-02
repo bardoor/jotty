@@ -95,7 +95,34 @@ private final class FixedConverter: PCMConverting, @unchecked Sendable {
   }
 }
 
+private final class RecordingLiveMixer: LiveAudioMixing, @unchecked Sendable {
+  private(set) var presentationTimes: [CMTime] = []
+
+  func append(_ pcm: Data, source: LiveAudioSource, presentationTime: CMTime) throws {
+    presentationTimes.append(presentationTime)
+  }
+
+  func finish(source: LiveAudioSource) throws {}
+
+  func fail(source: LiveAudioSource, reason: LiveAudioFailureReason) {}
+}
+
 struct LiveAudioTests {
+  @Test
+  func passesSourcePresentationTimeToRealtimeMixer() throws {
+    let mixer = RecordingLiveMixer()
+    let emitter = LiveAudioEmitter(
+      source: .system,
+      converter: FixedConverter(),
+      mixer: mixer
+    )
+    let expectedTime = CMTime(value: 250, timescale: 1_000)
+
+    emitter.process(try syntheticSampleBuffer(frameCount: 480, presentationTime: expectedTime))
+
+    #expect(mixer.presentationTimes == [expectedTime])
+  }
+
   @Test
   func mixesSystemAndMicrophonePCMIntoOneSaturatingStream() throws {
     let packetWriter = RecordingPacketWriter()
@@ -240,7 +267,10 @@ struct LiveAudioTests {
   }
 }
 
-private func syntheticSampleBuffer(frameCount: AVAudioFrameCount) throws -> CMSampleBuffer {
+private func syntheticSampleBuffer(
+  frameCount: AVAudioFrameCount,
+  presentationTime: CMTime = .zero
+) throws -> CMSampleBuffer {
   let format = AVAudioFormat(
     commonFormat: .pcmFormatInt16,
     sampleRate: 48_000,
@@ -290,7 +320,7 @@ private func syntheticSampleBuffer(frameCount: AVAudioFrameCount) throws -> CMSa
 
   var timing = CMSampleTimingInfo(
     duration: CMTime(value: 1, timescale: 48_000),
-    presentationTimeStamp: .zero,
+    presentationTimeStamp: presentationTime,
     decodeTimeStamp: .invalid
   )
   var sampleSize = MemoryLayout<Int16>.size

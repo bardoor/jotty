@@ -62,11 +62,10 @@ final class Recorder: NSObject, SCStreamDelegate, @unchecked Sendable {
 
   init(
     paths: RecordingPaths,
-    liveOutput: PacketWriting?,
+    liveMixer: LiveAudioMixing?,
     onFailure: @escaping @Sendable (Swift.Error) -> Void
   ) {
     self.onFailure = onFailure
-    let liveMixer = liveOutput.map(LiveAudioMixer.init)
     systemOutput = AudioStreamOutput(
       label: "dev.jotty.recorder.system-audio",
       outputURL: paths.systemAudio,

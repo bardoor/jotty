@@ -5,6 +5,7 @@ import path from "node:path";
 import readline from "node:readline";
 
 import { forwardBackendOutput } from "./backend";
+import { windowFrameOptions } from "./window";
 
 let backend: ChildProcessWithoutNullStreams | null = null;
 
@@ -60,12 +61,8 @@ async function startBackend(): Promise<string> {
 async function createWindow() {
   const websocketUrl = await startBackend();
   const window = new BrowserWindow({
-    width: 1080,
-    height: 760,
-    minWidth: 720,
-    minHeight: 520,
+    ...windowFrameOptions,
     title: "Jotty",
-    titleBarStyle: "hiddenInset",
     backgroundColor: "#f4ede2",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),

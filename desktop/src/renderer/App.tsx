@@ -29,14 +29,8 @@ export function App({ connection }: AppProps) {
   return (
     <div className={`app${summaryOpen ? " summary-open" : ""}`}>
       <header>
-        <div className="brand">
-          <span className="mark">j</span>
-          Jotty
-        </div>
-        <div className="title">
-          <strong>Live transcript</strong>
-          <span>{state.status === "recording" ? "Recording" : "Meeting notes"}</span>
-        </div>
+        <span className="titlebar-space" aria-hidden="true" />
+        <span className="header-logo" role="img" aria-label="Jotty logo" />
         <div className="status">
           {state.status === "recording" && <span className="recording-dot" />}
           <span>{state.status}</span>
@@ -47,7 +41,6 @@ export function App({ connection }: AppProps) {
           {state.status === "connecting" && <div className="empty-state">Connecting to Jotty…</div>}
           {state.status === "idle" && state.utterances.length === 0 && (
             <div className="empty-state">
-              <span className="empty-mark">j</span>
               <h1>Ready when you are</h1>
               <p>Capture system audio and your microphone in one private local session.</p>
               <button
@@ -62,7 +55,6 @@ export function App({ connection }: AppProps) {
           )}
           {state.status === "starting" && (
             <div className="empty-state">
-              <span className="empty-mark">j</span>
               <h1>Starting recording…</h1>
               <p>Waiting for system audio and microphone capture to become ready.</p>
             </div>

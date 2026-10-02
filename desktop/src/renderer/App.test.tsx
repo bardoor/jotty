@@ -28,9 +28,19 @@ class FakeConnection implements DesktopConnection {
 }
 
 describe("App", () => {
-  it("sends explicit start and stop commands for the recording lifecycle", () => {
+  it("shows the centered standalone Jotty mark", () => {
     const connection = new FakeConnection();
     render(<App connection={connection} />);
+
+    expect(screen.getByRole("img", { name: "Jotty logo" })).toBeTruthy();
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+    expect(screen.queryByText("Jotty")).toBeNull();
+    expect(screen.queryByText("Live transcript")).toBeNull();
+  });
+
+  it("sends explicit start and stop commands for the recording lifecycle", () => {
+    const connection = new FakeConnection();
+    const { container } = render(<App connection={connection} />);
 
     act(() => {
       connection.emit({
@@ -44,6 +54,7 @@ describe("App", () => {
       });
     });
 
+    expect(container.querySelector(".empty-mark")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
     expect(connection.commands).toEqual([{ type: "start" }]);
 

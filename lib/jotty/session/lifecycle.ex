@@ -15,8 +15,8 @@ defmodule Jotty.Session.Lifecycle do
     SessionFailed,
     SessionStarting,
     SessionStopping,
-    StartRequested,
-    StopRequested,
+    StartSession,
+    StopSession,
     SummaryFailed,
     SummaryReady,
     TranscriptFailed,
@@ -32,14 +32,11 @@ defmodule Jotty.Session.Lifecycle do
 
   defstruct phase: :idle, recorder_result: nil, transcription_failure: nil
 
-  @spec new(keyword()) :: t()
-  def new(_options), do: %__MODULE__{}
-
   @impl true
   def subscriptions do
     [
-      StartRequested,
-      StopRequested,
+      StartSession,
+      StopSession,
       RecordingStarted,
       RecorderFinished,
       RealtimeTranscriptionFailed,
@@ -52,15 +49,21 @@ defmodule Jotty.Session.Lifecycle do
   end
 
   @impl true
-  def handle_message(%StartRequested{}, %State{lifecycle: %__MODULE__{phase: :idle}} = state) do
-    Logger.info("starting", scope: :session)
+  def handle_message(%StartSession{contexts: contexts}, %State{lifecycle: %__MODULE__{phase: :idle}} = state) do
+    case Jotty.Insights.validate_contexts(contexts) do
+      :ok ->
+        Logger.info("starting", scope: :session)
 
-    state
-    |> put_phase(:starting)
-    |> Events.publish(%SessionStarting{})
+        state
+        |> put_phase(:starting)
+        |> Events.publish(%SessionStarting{})
+
+      {:error, reason} ->
+        Events.publish(state, %SessionFailed{reason: reason})
+    end
   end
 
-  def handle_message(%StopRequested{}, %State{lifecycle: %__MODULE__{phase: :running}} = state) do
+  def handle_message(%StopSession{}, %State{lifecycle: %__MODULE__{phase: :running}} = state) do
     Logger.info("stopping", scope: :session)
 
     state

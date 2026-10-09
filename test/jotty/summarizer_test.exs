@@ -4,17 +4,17 @@ defmodule Jotty.SummarizerTest do
   alias Jotty.Summarizer
 
   @tag :tmp_dir
-  test "uses Codex OAuth to write a decision-focused Markdown summary", %{tmp_dir: directory} do
+  test "uses Hermes to stream progress and write a decision-focused Markdown summary", %{tmp_dir: directory} do
     transcript_path = Path.join(directory, "transcript.txt")
     summary_path = Path.join(directory, "summary.md")
     captured_prompt = Path.join(directory, "prompt.txt")
     bin_directory = Path.join(directory, "bin")
-    codex_path = Path.join(bin_directory, "codex")
+    hermes_path = Path.join(bin_directory, "hermes")
 
     File.mkdir!(bin_directory)
     File.write!(transcript_path, "Speaker 1: We decided to ship on Friday.")
-    File.write!(codex_path, fake_codex())
-    File.chmod!(codex_path, 0o755)
+    File.write!(hermes_path, fake_hermes())
+    File.chmod!(hermes_path, 0o755)
     File.mkdir!(Path.join(directory, "jotty-summary-1"))
 
     original_path = System.get_env("PATH")
@@ -29,8 +29,10 @@ defmodule Jotty.SummarizerTest do
       System.delete_env("JOTTY_CAPTURED_PROMPT")
     end)
 
-    assert :ok = Summarizer.summarize(transcript_path, summary_path)
+    owner = self()
+    assert :ok = Summarizer.summarize(transcript_path, summary_path, &send(owner, {:event, &1}))
     assert File.read!(summary_path) == "# Summary\nEverything happened.\n"
+    assert_receive {:event, %Jotty.Hermes.Event{type: :text}}
 
     prompt = File.read!(captured_prompt)
     assert prompt =~ "every accepted decision as a separate bullet"
@@ -38,19 +40,21 @@ defmodule Jotty.SummarizerTest do
     assert prompt =~ "Speaker 1: We decided to ship on Friday."
   end
 
-  defp fake_codex do
+  defp fake_hermes do
     """
     #!/bin/sh
-    output=""
+    query_file=""
     while [ "$#" -gt 0 ]; do
-      if [ "$1" = "--output-last-message" ]; then
+      if [ "$1" = "--query-file" ]; then
         shift
-        output="$1"
+        query_file="$1"
       fi
       shift
     done
-    /bin/cat > "$JOTTY_CAPTURED_PROMPT"
-    /usr/bin/printf '# Summary\nEverything happened.\n' > "$output"
+    /bin/cat "$query_file" > "$JOTTY_CAPTURED_PROMPT"
+    /usr/bin/printf '%s\n' '{"type":"system","subtype":"init"}'
+    /usr/bin/printf '%s\n' '{"type":"text","text":"# Summary"}'
+    /usr/bin/printf '%s\n' '{"type":"result","exit_code":0,"text":"# Summary\\nEverything happened.\\n"}'
     """
   end
 

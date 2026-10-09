@@ -8,18 +8,24 @@ defmodule Jotty.MixProject do
       elixir: "~> 1.20",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
+      aliases: aliases(),
       deps: deps(),
-      escript: [main_module: Jotty.CLI]
+      escript: [
+        main_module: Jotty.CLI,
+        app: nil,
+        include_priv_for: ~w(jotty exqlite)a
+      ]
     ]
   end
 
   def application do
-    [extra_applications: [:logger]]
+    [extra_applications: ~w(logger)a, mod: {Jotty.Application, []}]
   end
 
   defp deps do
     [
       {:bandit, "~> 1.12"},
+      {:ecto_sqlite3, "~> 0.25"},
       {:jason, "~> 1.4.5"},
       {:plug, "~> 1.20"},
       {:req, "~> 0.7.4"},
@@ -30,4 +36,8 @@ defmodule Jotty.MixProject do
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_environment), do: ["lib"]
+
+  defp aliases do
+    [test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"]]
+  end
 end

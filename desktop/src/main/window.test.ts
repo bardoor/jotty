@@ -5,8 +5,8 @@ import { windowFrameOptions } from "./window";
 describe("windowFrameOptions", () => {
   it("uses a compact fixed frame with an inset macOS title bar", () => {
     expect(windowFrameOptions).toEqual({
-      width: 360,
-      height: 520,
+      width: 440,
+      height: 552,
       resizable: false,
       maximizable: false,
       titleBarStyle: "hiddenInset"

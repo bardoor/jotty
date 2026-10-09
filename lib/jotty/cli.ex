@@ -2,14 +2,18 @@ defmodule Jotty.CLI do
   @moduledoc false
 
   alias Jotty.Desktop.Server
-  alias Jotty.Recording
 
   @spec main([String.t()]) :: no_return()
   def main(arguments) do
+    :ok = Jotty.EscriptRuntime.start_application()
+
     case run(arguments) do
       {:ok, %Server{} = server} ->
         IO.puts(Jason.encode!(%{type: "ready", websocket_url: "ws://127.0.0.1:#{server.port}/ws"}))
         Process.sleep(:infinity)
+
+      {:ok, :migrated} ->
+        System.halt(0)
 
       {:ok, result} ->
         IO.puts(success_path(result))
@@ -39,21 +43,30 @@ defmodule Jotty.CLI do
 
     with {options, [], []} <- OptionParser.parse(arguments, strict: switches),
          {:ok, context_directory} <- Keyword.fetch(options, :context) do
-      enrichment_options = Keyword.take(options, [:model, :reasoning_effort])
+      enrichment_options = Keyword.take(options, ~w(model reasoning_effort)a)
       Jotty.Enricher.enrich(recording_directory, context_directory, enrichment_options)
     else
       _invalid_arguments -> {:error, :usage}
     end
   end
 
-  def run(["assist" | arguments]) do
+  def run(["insights" | arguments]) do
     parsed = OptionParser.parse(arguments, strict: [context: :keep])
-    run_assistant(parsed)
+    run_insights(parsed)
   end
 
   def run(["serve" | arguments]) do
     parsed = OptionParser.parse(arguments, strict: [port: :integer])
     run_server(parsed)
+  end
+
+  def run(["migrate"]) do
+    migrations =
+      Application.get_env(:jotty, :migrations_path) ||
+        Application.app_dir(:jotty, "priv/repo/migrations")
+
+    Ecto.Migrator.run(Jotty.Repo, migrations, :up, all: true)
+    {:ok, :migrated}
   end
 
   def run(_arguments), do: {:error, :usage}
@@ -63,7 +76,7 @@ defmodule Jotty.CLI do
     home = System.user_home!()
     recorded_at = DateTime.utc_now()
 
-    with :ok <- Jotty.Assistant.validate_contexts(context_directories),
+    with :ok <- Jotty.Insights.validate_contexts(context_directories),
          {:ok, api_key} <- fetch_api_key(),
          {:ok, recorder} <- native_recorder() do
       Jotty.record(home, recorder, api_key, recorded_at, contexts: context_directories)
@@ -72,7 +85,7 @@ defmodule Jotty.CLI do
 
   defp run_record(_invalid_arguments), do: {:error, :usage}
 
-  defp run_assistant({options, [], []}) do
+  defp run_insights({options, [], []}) do
     context_directories = Keyword.get_values(options, :context)
     home = System.user_home!()
     utterances = IO.stream(:stdio, :line)
@@ -81,11 +94,11 @@ defmodule Jotty.CLI do
     if context_directories == [] do
       {:error, :usage}
     else
-      Jotty.Assistant.run(home, context_directories, utterances, started_at)
+      Jotty.Insights.run(home, context_directories, utterances, started_at)
     end
   end
 
-  defp run_assistant(_invalid_arguments), do: {:error, :usage}
+  defp run_insights(_invalid_arguments), do: {:error, :usage}
 
   defp run_server({options, [], []}) do
     port = Keyword.get(options, :port, 4_765)
@@ -96,11 +109,15 @@ defmodule Jotty.CLI do
       session_options = [
         api_key: api_key,
         recorder: recorder,
-        recorder_options: [stop: :message],
-        recording: fn -> Recording.create!(home, DateTime.utc_now()) end
+        recorder_options: [stop: :message]
       ]
 
-      Server.start(session_options: session_options, port: port)
+      Server.start(
+        home: home,
+        session_options: session_options,
+        port: port,
+        context_approval_secret: System.get_env("JOTTY_CONTEXT_APPROVAL_SECRET")
+      )
     end
   end
 
@@ -111,7 +128,7 @@ defmodule Jotty.CLI do
 
   defp print_usage do
     usage =
-      "Usage:\n  jotty record [--context CONTEXT_DIRECTORY ...]\n  jotty serve [--port PORT]\n  jotty enrich RECORDING_DIRECTORY --context CONTEXT_DIRECTORY [--model MODEL] [--reasoning-effort EFFORT]\n  jotty assist --context CONTEXT_DIRECTORY [--context CONTEXT_DIRECTORY ...]"
+      "Usage:\n  jotty migrate\n  jotty record [--context CONTEXT_DIRECTORY ...]\n  jotty serve [--port PORT]\n  jotty enrich RECORDING_DIRECTORY --context CONTEXT_DIRECTORY [--model MODEL] [--reasoning-effort EFFORT]\n  jotty insights --context CONTEXT_DIRECTORY [--context CONTEXT_DIRECTORY ...]"
 
     IO.puts(:stderr, usage)
   end
@@ -124,7 +141,7 @@ defmodule Jotty.CLI do
   end
 
   defp native_recorder do
-    script_path = :escript.script_name() |> to_string() |> Path.expand()
+    script_path = Path.expand(to_string(:escript.script_name()))
 
     path =
       Path.join([
@@ -157,7 +174,6 @@ defmodule Jotty.CLI do
     "could not stop native recorder (status #{status}): #{output}"
   end
 
-  defp format_error({:codex, output}), do: "Codex failed: #{output}"
   defp format_error({:transcript_not_found, path}), do: "transcript not found at #{path}"
 
   defp format_error({:context_directory_not_found, path}) do
@@ -165,7 +181,6 @@ defmodule Jotty.CLI do
   end
 
   defp format_error(:hermes_not_found), do: "hermes executable was not found in PATH"
-  defp format_error(:codex_not_found), do: "codex executable was not found in PATH"
 
   defp format_error({:hermes, status, output}) do
     "Hermes failed with status #{status}: #{output}"

@@ -6,18 +6,22 @@ defmodule Jotty.CLITest do
   test "rejects unsupported commands" do
     assert {:error, :usage} = CLI.run([])
     assert {:error, :usage} = CLI.run(["unknown"])
-    assert {:error, :usage} = CLI.run(["assist"])
+    assert {:error, :usage} = CLI.run(["insights"])
     assert {:error, :usage} = CLI.run(["serve", "--port", "invalid"])
   end
 
+  test "runs migrations only through the explicit command" do
+    assert {:ok, :migrated} = CLI.run(["migrate"])
+  end
+
   @tag :tmp_dir
-  test "preserves every context directory passed to assist", %{tmp_dir: directory} do
+  test "preserves every context directory passed to insights", %{tmp_dir: directory} do
     first_directory = Path.join(directory, "first-missing")
     second_directory = Path.join(directory, "second-missing")
 
     assert {:error, {:context_directory_not_found, ^first_directory}} =
              CLI.run([
-               "assist",
+               "insights",
                "--context",
                first_directory,
                "--context",

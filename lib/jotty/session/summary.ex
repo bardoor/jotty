@@ -5,6 +5,7 @@ defmodule Jotty.Session.Summary do
 
   require Logger
 
+  alias Jotty.Hermes.Activity
   alias Jotty.Session.Events
 
   alias Jotty.Session.Events.{
@@ -24,8 +25,8 @@ defmodule Jotty.Session.Summary do
           reference: reference() | nil
         }
 
-  @enforce_keys [:summarizer]
-  defstruct [:summarizer, worker: nil, reference: nil]
+  @enforce_keys ~w(summarizer)a
+  defstruct ~w(summarizer worker reference)a
 
   @spec new(keyword()) :: t()
   def new(options) do
@@ -43,7 +44,8 @@ defmodule Jotty.Session.Summary do
 
     {worker, reference} =
       Jotty.Process.spawn_monitor(fn ->
-        result = state.summary.summarizer.summarize(recording.transcript, recording.summary)
+        on_event = &Server.publish(server, Activity.from_event(:summary, &1))
+        result = state.summary.summarizer.summarize(recording.transcript, recording.summary, on_event)
         Server.publish(server, %SummaryCompleted{result: result})
       end)
 

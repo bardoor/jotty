@@ -4,25 +4,17 @@ defmodule Jotty.STT.Soniox.Aggregator do
   alias Jotty.STT.Soniox.Token
   alias Jotty.STT.TranscriptionChunk
 
-  defstruct finalized: []
-
   @type t :: %__MODULE__{
           finalized: [Token.t()]
         }
   @type event :: {:preview | :completed, [TranscriptionChunk.t()]}
 
-  @spec new() :: t()
-  def new, do: %__MODULE__{}
+  defstruct finalized: []
 
   @spec consume(t(), {:batch, [Token.t() | :endpoint]} | :finished) ::
           {t(), [event()]}
   def consume(%__MODULE__{} = state, {:batch, items}) do
-    {before_endpoint, from_endpoint} = Enum.split_while(items, &(&1 != :endpoint))
-
-    case from_endpoint do
-      [] -> consume_streaming(state, before_endpoint)
-      [:endpoint | next_tokens] -> consume_endpoint(state, before_endpoint, next_tokens)
-    end
+    consume_items(state, items, [])
   end
 
   def consume(%__MODULE__{finalized: finalized} = state, :finished) do
@@ -30,16 +22,28 @@ defmodule Jotty.STT.Soniox.Aggregator do
     {state, event(:completed, finalized)}
   end
 
+  defp consume_items(state, items, events) do
+    {before_endpoint, from_endpoint} = Enum.split_while(items, &(&1 != :endpoint))
+
+    case from_endpoint do
+      [] ->
+        {state, streaming_events} = consume_streaming(state, before_endpoint)
+        {state, events ++ streaming_events}
+
+      [:endpoint | next_items] ->
+        {state, endpoint_events} = consume_endpoint(state, before_endpoint)
+        consume_items(state, next_items, events ++ endpoint_events)
+    end
+  end
+
   defp consume_streaming(%{finalized: finalized} = state, tokens) do
     state = %{state | finalized: finalized ++ finalized(tokens)}
     {state, event(:preview, finalized ++ tokens)}
   end
 
-  defp consume_endpoint(%{finalized: finalized} = state, tokens, next_tokens) do
+  defp consume_endpoint(%{finalized: finalized} = state, tokens) do
     completed = finalized ++ finalized(tokens)
-    state = %{state | finalized: finalized(next_tokens)}
-    events = event(:completed, completed) ++ event(:preview, next_tokens)
-    {state, events}
+    {%{state | finalized: []}, event(:completed, completed)}
   end
 
   defp finalized(tokens) do

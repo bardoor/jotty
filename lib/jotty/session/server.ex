@@ -7,13 +7,14 @@ defmodule Jotty.Session.Server do
     ClientAttached,
     ProcessExited,
     SessionTerminating,
-    StartRequested,
-    StopRequested,
+    StartSession,
+    StopSession,
     TranscriptionTimeout
   }
 
   alias Jotty.Session.{Events, Presentation, State}
   alias Jotty.Session.Presentation.Snapshot
+  alias Jotty.Settings.RecordingConfiguration
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(options), do: GenServer.start_link(__MODULE__, options)
@@ -21,14 +22,27 @@ defmodule Jotty.Session.Server do
   @spec publish(pid(), Events.message()) :: :ok
   def publish(server, message), do: GenServer.cast(server, {:message, message})
 
-  @spec start_recording(pid()) :: :ok
-  def start_recording(server), do: GenServer.call(server, {:message, %StartRequested{}})
+  @spec start_recording(pid(), RecordingConfiguration.t()) :: :ok
+  def start_recording(server, %RecordingConfiguration{} = configuration) do
+    message = %StartSession{
+      contexts: configuration.contexts,
+      microphone_device_id: configuration.microphone_device_id
+    }
+
+    GenServer.call(server, {:message, message})
+  end
 
   @spec stop_recording(pid()) :: :ok
-  def stop_recording(server), do: GenServer.call(server, {:message, %StopRequested{}})
+  def stop_recording(server), do: GenServer.call(server, {:message, %StopSession{}})
 
   @spec attach(pid(), pid()) :: Snapshot.t()
   def attach(server, client), do: GenServer.call(server, {:attach, client})
+
+  @spec snapshot(pid()) :: Snapshot.t()
+  def snapshot(server), do: GenServer.call(server, :snapshot)
+
+  @spec reap_ready?(pid()) :: boolean()
+  def reap_ready?(server), do: GenServer.call(server, :reap_ready?)
 
   @impl GenServer
   def init(options) do
@@ -39,6 +53,15 @@ defmodule Jotty.Session.Server do
   @impl GenServer
   def handle_call({:message, message}, _from, state) do
     {:reply, :ok, Events.dispatch(state, message)}
+  end
+
+  def handle_call(:reap_ready?, _from, state) do
+    ready? = state.recording.worker == nil and state.transcription.stream == nil and state.summary.worker == nil
+    {:reply, ready?, state}
+  end
+
+  def handle_call(:snapshot, _from, state) do
+    {:reply, Presentation.snapshot(state), state}
   end
 
   def handle_call({:attach, client}, _from, state) do

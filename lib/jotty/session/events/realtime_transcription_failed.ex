@@ -1,8 +1,8 @@
 defmodule Jotty.Session.Events.RealtimeTranscriptionFailed do
   @moduledoc false
 
-  @enforce_keys [:source, :reason]
-  defstruct @enforce_keys
-
   @type t :: %__MODULE__{source: atom() | nil, reason: term()}
+
+  @enforce_keys ~w(source reason)a
+  defstruct ~w(source reason)a
 end

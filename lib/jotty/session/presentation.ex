@@ -5,7 +5,9 @@ defmodule Jotty.Session.Presentation do
 
   alias Jotty.Session.Events.{
     ClientAttached,
+    HermesActivityObserved,
     RecordingStarted,
+    RecorderFinished,
     RealtimeTranscriptionFailed,
     SessionCompleted,
     SessionFailed,
@@ -28,6 +30,7 @@ defmodule Jotty.Session.Presentation do
           utterances: [UtteranceCompleted.t()],
           realtime_error: String.t() | nil,
           summary: String.t() | nil,
+          activities: [HermesActivityObserved.t()],
           recording_directory: Path.t() | nil
         }
 
@@ -38,6 +41,7 @@ defmodule Jotty.Session.Presentation do
             utterances: [],
             realtime_error: nil,
             summary: nil,
+            activities: [],
             recording_directory: nil
 
   @spec new(keyword()) :: t()
@@ -51,10 +55,12 @@ defmodule Jotty.Session.Presentation do
       ClientAttached,
       SessionStarting,
       RecordingStarted,
+      RecorderFinished,
       SessionStopping,
       TranscriptionPreviewed,
       UtteranceCompleted,
       RealtimeTranscriptionFailed,
+      HermesActivityObserved,
       SummaryReady,
       SessionCompleted,
       SessionFailed
@@ -69,6 +75,7 @@ defmodule Jotty.Session.Presentation do
       preview: state.presentation.preview,
       realtime_error: state.presentation.realtime_error,
       summary: state.presentation.summary,
+      activities: state.presentation.activities,
       recording_directory: state.presentation.recording_directory
     }
   end
@@ -92,7 +99,11 @@ defmodule Jotty.Session.Presentation do
     |> emit_client(%{type: :state, status: :recording})
   end
 
+  def handle_message(%RecorderFinished{} = event, %State{} = state), do: emit_domain(state, event)
+
   def handle_message(%SessionStopping{} = event, %State{} = state) do
+    state = %{state | presentation: %{state.presentation | activities: []}}
+
     state
     |> update_status(:stopping)
     |> emit_domain(event)
@@ -124,6 +135,24 @@ defmodule Jotty.Session.Presentation do
     %{state | presentation: presentation}
     |> emit_domain(event)
     |> emit_client(client_event)
+  end
+
+  def handle_message(%HermesActivityObserved{} = event, %State{} = state) do
+    if List.last(state.presentation.activities) == event do
+      state
+    else
+      activities = Enum.take(state.presentation.activities ++ [event], -20)
+      state = %{state | presentation: %{state.presentation | activities: activities}}
+
+      state
+      |> emit_domain(event)
+      |> emit_client(%{
+        type: :hermes_activity,
+        stage: event.stage,
+        status: event.status,
+        message: event.message
+      })
+    end
   end
 
   def handle_message(%SummaryReady{recording: recording, markdown: markdown} = event, %State{} = state) do

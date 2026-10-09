@@ -7,6 +7,7 @@ defmodule Jotty.SessionTest do
 
   alias Jotty.Session.Events.{
     AudioReceived,
+    HermesActivityObserved,
     RealtimeTranscriptionFailed,
     RecorderFinished,
     RecordingStarted,
@@ -19,15 +20,17 @@ defmodule Jotty.SessionTest do
   }
 
   alias Jotty.Session.{Events, Server, State}
+  alias Jotty.Settings.RecordingConfiguration
 
   defmodule FakeSummarizer do
-    def summarize(_transcript, summary) do
+    def summarize(_transcript, summary, on_event) do
+      on_event.(%Jotty.Hermes.Event{type: :init})
       File.write(summary, "# Summary\nDone.\n")
     end
   end
 
   defmodule BlockingSummarizer do
-    def summarize(_transcript, summary) do
+    def summarize(_transcript, summary, _on_event) do
       test = Process.whereis(:jotty_blocking_summarizer_test)
       send(test, {:summary_started, self()})
 
@@ -52,6 +55,13 @@ defmodule Jotty.SessionTest do
     refute_receive {:transport_started, _transport, _owner, _source, _configuration}
 
     finish_recording(session, stream)
+
+    assert_receive {:jotty_session_event,
+                    %HermesActivityObserved{
+                      stage: :summary,
+                      status: :started,
+                      message: "Starting Hermes"
+                    }}
   end
 
   @tag :tmp_dir
@@ -144,7 +154,7 @@ defmodule Jotty.SessionTest do
         transport: FailingTransport
       )
 
-    :ok = Server.start_recording(session)
+    :ok = start_session(session)
 
     assert_receive {:jotty_session_event, %SessionFailed{reason: {:stream_start, _reason}}}, 2_000
     refute_receive {:jotty_session_event, %RecordingStarted{}}
@@ -157,7 +167,7 @@ defmodule Jotty.SessionTest do
     recording = recording(directory)
 
     log =
-      capture_log([metadata: [:scope, :session_id, :recording_id, :provider, :reason]], fn ->
+      capture_log([metadata: ~w(scope session_id recording_id provider reason)a], fn ->
         {:ok, session} =
           Server.start_link(
             api_key: "test-key",
@@ -168,7 +178,7 @@ defmodule Jotty.SessionTest do
             transport: FailingTransport
           )
 
-        :ok = Server.start_recording(session)
+        :ok = start_session(session)
         assert_receive {:jotty_session_event, %SessionFailed{}}, 2_000
         assert_eventually(fn -> File.exists?(recording.system_audio) end)
         GenServer.stop(session)
@@ -187,7 +197,7 @@ defmodule Jotty.SessionTest do
   @tag :tmp_dir
   test "logs the successful recording, transcription, transcript, and summary lifecycle", %{tmp_dir: directory} do
     log =
-      capture_log([metadata: [:scope, :session_id, :recording_id, :provider, :result, :reason]], fn ->
+      capture_log([metadata: ~w(scope session_id recording_id provider result reason)a], fn ->
         {session, stream} = start_recording(directory)
         send(stream.transport, {:text, completed_response("done", "1")})
         assert {:ok, _recording} = finish_recording(session, stream)
@@ -222,7 +232,7 @@ defmodule Jotty.SessionTest do
       )
 
     log =
-      capture_log([metadata: [:scope, :reason]], fn ->
+      capture_log([metadata: ~w(scope reason)a], fn ->
         Events.dispatch(state, %SessionFailed{reason: :late_failure})
         Logger.flush()
       end)
@@ -246,7 +256,7 @@ defmodule Jotty.SessionTest do
         transport_options: [test_pid: self()]
       )
 
-    :ok = Server.start_recording(session)
+    :ok = start_session(session)
 
     assert_receive {:transport_started, transport, owner, :mixed, configuration}
     assert_receive {:jotty_session_event, %SessionStarting{}}
@@ -274,6 +284,11 @@ defmodule Jotty.SessionTest do
     assert_receive {:jotty_session_event, %SessionCompleted{result: result}}, 2_000
     GenServer.stop(session)
     result
+  end
+
+  defp start_session(session) do
+    configuration = %RecordingConfiguration{contexts: [], microphone_device_id: nil}
+    Server.start_recording(session, configuration)
   end
 
   defp recording(directory) do

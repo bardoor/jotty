@@ -1,7 +1,7 @@
 defmodule Jotty.Session.Presentation.Snapshot do
   @moduledoc false
 
-  alias Jotty.Session.Events.{TranscriptionPreviewed, UtteranceCompleted}
+  alias Jotty.Session.Events.{HermesActivityObserved, TranscriptionPreviewed, UtteranceCompleted}
 
   @type t :: %__MODULE__{
           type: :snapshot,
@@ -10,6 +10,7 @@ defmodule Jotty.Session.Presentation.Snapshot do
           preview: TranscriptionPreviewed.t() | nil,
           realtime_error: String.t() | nil,
           summary: String.t() | nil,
+          activities: [HermesActivityObserved.t()],
           recording_directory: Path.t() | nil
         }
 
@@ -19,5 +20,6 @@ defmodule Jotty.Session.Presentation.Snapshot do
             preview: nil,
             realtime_error: nil,
             summary: nil,
+            activities: [],
             recording_directory: nil
 end

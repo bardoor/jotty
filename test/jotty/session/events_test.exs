@@ -1,33 +1,36 @@
 defmodule Jotty.Session.EventsTest do
   use ExUnit.Case, async: true
 
-  alias Jotty.Session.{Assistant, Lifecycle, Presentation, Recording, Summary, Transcript, Transcription}
+  alias Jotty.Session.{Insights, Lifecycle, Presentation, Recording, Summary, Transcript, Transcription}
 
   alias Jotty.Session.Events.{
     AudioReceived,
     SessionStarting,
     SessionStopping,
-    StartRequested,
+    StartSession,
     TranscriptReady,
     TranscriptionFinished,
     UtteranceCompleted
   }
 
-  @handlers [Lifecycle, Recording, Transcription, Transcript, Assistant, Summary, Presentation]
-
   test "handlers explicitly subscribe to requests, media, and facts" do
-    assert subscribers(%StartRequested{}) == [Lifecycle]
-    assert subscribers(%SessionStarting{}) == [Recording, Transcription, Assistant, Presentation]
+    assert subscribers(%StartSession{contexts: [], microphone_device_id: nil}) == [
+             Lifecycle,
+             Recording,
+             Insights
+           ]
+
+    assert subscribers(%SessionStarting{}) == [Recording, Transcription, Insights, Presentation]
     assert subscribers(%SessionStopping{}) == [Recording, Presentation]
     assert subscribers(%AudioReceived{pcm: <<1, 2>>}) == [Transcription]
 
     assert subscribers(%UtteranceCompleted{chunks: []}) == [
              Transcript,
-             Assistant,
+             Insights,
              Presentation
            ]
 
-    assert subscribers(%TranscriptionFinished{}) == [Transcription, Transcript, Assistant]
+    assert subscribers(%TranscriptionFinished{}) == [Transcription, Transcript, Insights]
 
     assert subscribers(%TranscriptReady{path: "/tmp/transcript.txt"}) == [
              Lifecycle,
@@ -35,27 +38,8 @@ defmodule Jotty.Session.EventsTest do
            ]
   end
 
-  test "every request has exactly one subscriber" do
-    {:ok, modules} = :application.get_key(:jotty, :modules)
-
-    request_modules =
-      Enum.filter(modules, fn module ->
-        module
-        |> Module.split()
-        |> List.last()
-        |> String.ends_with?("Requested")
-      end)
-
-    assert Enum.all?(request_modules, fn request ->
-             request
-             |> struct()
-             |> subscribers()
-             |> length()
-             |> Kernel.==(1)
-           end)
-  end
-
   defp subscribers(%message{}) do
-    Enum.filter(@handlers, &(message in &1.subscriptions()))
+    handlers = [Lifecycle, Recording, Transcription, Transcript, Insights, Summary, Presentation]
+    Enum.filter(handlers, &(message in &1.subscriptions()))
   end
 end

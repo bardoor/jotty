@@ -1,17 +1,37 @@
 defmodule Jotty.Desktop.Protocol do
   @moduledoc false
 
+  alias Jotty.Desktop.Commands.{
+    AddContext,
+    ChangeAlwaysOnTop,
+    ChangeMicrophone,
+    DeleteSession,
+    ListMicrophones,
+    ListSessions,
+    OpenSession,
+    RemoveContext,
+    RenameSession,
+    ReorderContexts,
+    StartSession,
+    StopSession
+  }
+
+  alias Jotty.Desktop.Events.{
+    CommandRejected,
+    SessionDeleted,
+    SessionOpened,
+    SessionRenamed,
+    SessionsListed,
+    SettingsChanged
+  }
+
   alias Jotty.Session.Events.{TranscriptionPreviewed, UtteranceCompleted}
-  alias Jotty.Session.Presentation.Snapshot
+  alias Jotty.Session.Presentation.Snapshot, as: SessionSnapshot
 
-  @spec decode!(String.t()) :: :start | :stop
-  def decode!(payload) do
-    payload
-    |> Jason.decode!()
-    |> command()
-  end
+  @spec decode!(String.t()) :: struct()
+  def decode!(payload), do: command(Jason.decode!(payload))
 
-  @spec encode_event(TranscriptionPreviewed.t() | UtteranceCompleted.t() | Snapshot.t() | map()) :: String.t()
+  @spec encode_event(struct() | map()) :: String.t()
   def encode_event(%TranscriptionPreviewed{} = event) do
     event
     |> transcription_payload("transcription_previewed")
@@ -24,31 +44,117 @@ defmodule Jotty.Desktop.Protocol do
     |> Jason.encode!()
   end
 
-  def encode_event(%Snapshot{} = snapshot) do
-    snapshot
-    |> Map.from_struct()
-    |> Map.update!(
-      :utterances,
-      &Enum.map(&1, fn event -> transcription_payload(event, "utterance_completed") end)
-    )
-    |> Map.update!(:preview, &preview_payload/1)
+  def encode_event(%SessionSnapshot{} = snapshot), do: encode_snapshot(snapshot)
+  def encode_event(%{type: :snapshot} = snapshot), do: encode_snapshot(snapshot)
+
+  def encode_event(%SettingsChanged{snapshot: snapshot, error: error}) do
+    %{
+      type: :settings_changed,
+      always_on_top: snapshot.always_on_top,
+      microphone_device_id: snapshot.microphone_device_id,
+      microphone_available: snapshot.microphone_available,
+      microphones: Enum.map(snapshot.microphones, &microphone_payload/1),
+      contexts: Enum.map(snapshot.contexts, &context_payload/1),
+      error: error
+    }
     |> Jason.encode!()
   end
 
+  def encode_event(%SessionsListed{sessions: sessions}),
+    do: Jason.encode!(%{type: :sessions_listed, sessions: sessions})
+
+  def encode_event(%SessionOpened{session: session}),
+    do: Jason.encode!(%{type: :session_opened, session: session})
+
+  def encode_event(%SessionRenamed{session: session}),
+    do: Jason.encode!(%{type: :session_renamed, session: session})
+
+  def encode_event(%SessionDeleted{id: id}), do: Jason.encode!(%{type: :session_deleted, id: id})
+
+  def encode_event(%CommandRejected{command: command, reason: reason}) do
+    Jason.encode!(%{type: :command_rejected, command: command, reason: reason})
+  end
+
   def encode_event(%{type: type} = event)
-      when type in [:state, :summary_ready, :failed, :realtime_transcription_failed],
+      when type in ~w(state summary_ready hermes_activity failed realtime_transcription_failed settings_invalid command_rejected)a,
       do: Jason.encode!(event)
 
-  defp command(%{"type" => "start"}), do: :start
-  defp command(%{"type" => "stop"}), do: :stop
+  defp command(%{"type" => "start_session"}), do: %StartSession{}
+  defp command(%{"type" => "stop_session"}), do: %StopSession{}
+  defp command(%{"type" => "list_sessions"}), do: %ListSessions{}
+  defp command(%{"type" => "open_session", "id" => id}), do: %OpenSession{id: uuid!(id)}
 
-  defp transcription_payload(event, type) do
+  defp command(%{"type" => "rename_session", "id" => id, "title" => title}) when is_binary(title) do
+    %RenameSession{id: uuid!(id), title: title}
+  end
+
+  defp command(%{"type" => "delete_session", "id" => id}), do: %DeleteSession{id: uuid!(id)}
+
+  defp command(%{"type" => "change_always_on_top", "enabled" => enabled}) when is_boolean(enabled),
+    do: %ChangeAlwaysOnTop{enabled: enabled}
+
+  defp command(%{"type" => "change_microphone", "microphone_device_id" => device_id})
+       when is_binary(device_id) or is_nil(device_id),
+       do: %ChangeMicrophone{microphone_device_id: device_id}
+
+  defp command(%{"type" => "add_context", "path" => path, "approval" => approval})
+       when is_binary(path) and is_binary(approval),
+       do: %AddContext{path: path, approval: approval}
+
+  defp command(%{"type" => "remove_context", "id" => id}) do
+    %RemoveContext{id: uuid!(id)}
+  end
+
+  defp command(%{"type" => "reorder_contexts", "context_ids" => ids}) when is_list(ids) do
+    %ReorderContexts{context_ids: Enum.map(ids, &uuid!/1)}
+  end
+
+  defp command(%{"type" => "list_microphones"}), do: %ListMicrophones{}
+
+  defp encode_snapshot(%{recording_directory: recording_directory} = snapshot) do
+    payload = Map.put(snapshot_payload(snapshot), :recording_directory, recording_directory)
+    Jason.encode!(payload)
+  end
+
+  defp encode_snapshot(snapshot), do: Jason.encode!(snapshot_payload(snapshot))
+
+  defp snapshot_payload(snapshot) do
     %{
-      type: type,
-      chunks: Enum.map(event.chunks, &Map.from_struct/1)
+      type: snapshot.type,
+      status: snapshot.status,
+      utterances: Enum.map(snapshot.utterances, &transcription_payload(&1, "utterance_completed")),
+      preview: preview_payload(snapshot.preview),
+      realtime_error: snapshot.realtime_error,
+      summary: snapshot.summary,
+      activities: Enum.map(snapshot.activities, &activity_payload/1)
     }
+  end
+
+  defp transcription_payload(%{chunks: chunks}, type) do
+    %{type: type, chunks: Enum.map(chunks, &chunk_payload/1)}
   end
 
   defp preview_payload(nil), do: nil
   defp preview_payload(event), do: transcription_payload(event, "transcription_previewed")
+
+  defp microphone_payload(%{id: id, name: name}), do: %{id: id, name: name}
+
+  defp context_payload(%{id: id, name: name, path: path, position: position, available: available}) do
+    %{id: id, name: name, path: path, position: position, available: available}
+  end
+
+  defp activity_payload(%{stage: stage, status: status, message: message}) do
+    %{stage: stage, status: status, message: message}
+  end
+
+  defp chunk_payload(%{speaker: speaker, text: text, start_ms: start_ms, end_ms: end_ms}) do
+    %{speaker: speaker, text: text, start_ms: start_ms, end_ms: end_ms}
+  end
+
+  defp uuid!(id) do
+    case Ecto.UUID.cast(id) do
+      {:ok, uuid} -> uuid
+      :error -> raise ArgumentError, "invalid session id"
+    end
+  end
 end

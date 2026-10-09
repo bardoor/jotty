@@ -14,8 +14,6 @@ defmodule Jotty.STT.Soniox.Stream do
   alias Jotty.Session.Server
   alias Jotty.STT.Soniox.{Adapter, Aggregator}
 
-  @source :mixed
-
   @spec start(pid(), String.t(), module(), keyword()) ::
           {:ok, pid()} | {:error, term()}
   def start(session, api_key, transport, transport_options) do
@@ -35,7 +33,7 @@ defmodule Jotty.STT.Soniox.Stream do
   def init({metadata, session, api_key, transport, transport_options}) do
     Logger.metadata(metadata)
     configuration = Jason.encode!(configuration(api_key))
-    result = transport.start(self(), @source, configuration, transport_options)
+    result = transport.start(self(), :mixed, configuration, transport_options)
 
     init(result, session, transport)
   end
@@ -55,24 +53,24 @@ defmodule Jotty.STT.Soniox.Stream do
 
   @impl GenServer
   def handle_info(
-        {:soniox_transport, @source, {:text, payload}},
+        {:soniox_transport, :mixed, {:text, payload}},
         %{status: status} = state
       )
-      when status in [:streaming, :finishing] do
+      when status in ~w(streaming finishing)a do
     response = Adapter.decode(payload)
     consume_response(response, state)
   end
 
-  def handle_info({:soniox_transport, @source, :closed}, state) do
+  def handle_info({:soniox_transport, :mixed, :closed}, state) do
     stop_with_failure(state, :premature_close)
   end
 
-  def handle_info({:soniox_transport, @source, {:error, reason}}, state) do
+  def handle_info({:soniox_transport, :mixed, {:error, reason}}, state) do
     stop_with_failure(state, {:transport, reason})
   end
 
   def handle_info(
-        {:soniox_transport, @source, {:unexpected_frame, type}},
+        {:soniox_transport, :mixed, {:unexpected_frame, type}},
         state
       ) do
     stop_with_failure(state, {:unexpected_frame, type})
@@ -135,7 +133,7 @@ defmodule Jotty.STT.Soniox.Stream do
       transport: transport,
       transport_pid: transport_pid,
       transport_reference: Process.monitor(transport_pid),
-      aggregator: Aggregator.new(),
+      aggregator: %Aggregator{},
       status: :streaming
     }
 

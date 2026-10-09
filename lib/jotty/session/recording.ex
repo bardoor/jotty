@@ -16,7 +16,8 @@ defmodule Jotty.Session.Recording do
     SessionFailed,
     SessionStarting,
     SessionStopping,
-    SessionTerminating
+    SessionTerminating,
+    StartSession
   }
 
   alias Jotty.Session.Events.RecorderReady
@@ -34,8 +35,9 @@ defmodule Jotty.Session.Recording do
           phase: phase()
         }
 
-  @enforce_keys [:executable, :recording]
-  defstruct [:executable, :recording, options: [], worker: nil, reference: nil, result: nil, phase: :idle]
+  @enforce_keys ~w(executable recording)a
+  defstruct ~w(executable recording)a ++
+              [options: [], worker: nil, reference: nil, result: nil, phase: :idle]
 
   @spec new(keyword()) :: t()
   def new(options) do
@@ -50,6 +52,7 @@ defmodule Jotty.Session.Recording do
   def subscriptions do
     [
       SessionStarting,
+      StartSession,
       SessionStopping,
       RecorderReady,
       RecorderFinished,
@@ -60,6 +63,11 @@ defmodule Jotty.Session.Recording do
   end
 
   @impl true
+  def handle_message(%StartSession{microphone_device_id: device_id}, %State{} = state) do
+    options = Keyword.put(state.recording.options, :microphone_device_id, device_id)
+    %{state | recording: %{state.recording | options: options}}
+  end
+
   def handle_message(%SessionStarting{}, %State{} = state), do: start(state)
 
   def handle_message(%SessionStopping{}, %State{} = state) do

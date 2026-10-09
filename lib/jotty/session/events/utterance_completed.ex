@@ -3,8 +3,8 @@ defmodule Jotty.Session.Events.UtteranceCompleted do
 
   alias Jotty.STT.TranscriptionChunk
 
-  @enforce_keys [:chunks]
-  defstruct @enforce_keys
-
   @type t :: %__MODULE__{chunks: [TranscriptionChunk.t()]}
+
+  @enforce_keys ~w(chunks)a
+  defstruct ~w(chunks)a
 end

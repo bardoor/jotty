@@ -4,6 +4,16 @@ import Testing
 @testable import JottyRecorder
 
 struct DynamicAECProcessorTests {
+  @Test
+  func resolvesLibraryBesideRecorderExecutable() {
+    let executable = URL(fileURLWithPath: "/Applications/Jotty/jotty-recorder")
+
+    #expect(
+      DynamicAECProcessor.libraryURL(adjacentTo: executable)
+        == URL(fileURLWithPath: "/Applications/Jotty/libJottyAEC.dylib")
+    )
+  }
+
   @Test(.enabled(if: ProcessInfo.processInfo.environment["JOTTY_AEC_TEST_LIBRARY"] != nil))
   func loadsBridgeAndProcessesOneFrame() throws {
     let libraryPath = try #require(ProcessInfo.processInfo.environment["JOTTY_AEC_TEST_LIBRARY"])

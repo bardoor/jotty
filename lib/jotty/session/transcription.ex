@@ -35,17 +35,16 @@ defmodule Jotty.Session.Transcription do
           phase: phase()
         }
 
-  @enforce_keys [:api_key, :transport]
-  defstruct [
-    :api_key,
-    :transport,
-    transport_options: [],
-    shutdown_timeout: 10_000,
-    stream: nil,
-    reference: nil,
-    timer: nil,
-    phase: :idle
-  ]
+  @enforce_keys ~w(api_key transport)a
+  defstruct ~w(api_key transport)a ++
+              [
+                transport_options: [],
+                shutdown_timeout: 10_000,
+                stream: nil,
+                reference: nil,
+                timer: nil,
+                phase: :idle
+              ]
 
   @spec new(keyword()) :: t()
   def new(options) do
@@ -115,7 +114,7 @@ defmodule Jotty.Session.Transcription do
         %RealtimeTranscriptionFailed{} = failure,
         %State{transcription: %__MODULE__{phase: phase}} = state
       )
-      when phase in [:streaming, :finishing] do
+      when phase in ~w(streaming finishing)a do
     Stream.stop(state.transcription.stream)
     cancel_timer(state.transcription.timer)
     Logger.error("failed", scope: :transcription, provider: :soniox, reason: inspect(failure.reason))
@@ -144,7 +143,7 @@ defmodule Jotty.Session.Transcription do
         %ProcessExited{reference: reference, pid: stream},
         %State{transcription: %__MODULE__{reference: reference, stream: stream, phase: phase}} = state
       )
-      when phase in [:streaming, :finishing] do
+      when phase in ~w(streaming finishing)a do
     Events.publish(state, %RealtimeTranscriptionFailed{source: nil, reason: :stream_exit})
   end
 

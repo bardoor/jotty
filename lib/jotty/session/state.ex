@@ -1,7 +1,7 @@
 defmodule Jotty.Session.State do
   @moduledoc false
 
-  alias Jotty.Session.{Assistant, Lifecycle, Presentation, Recording, Summary, Transcript, Transcription}
+  alias Jotty.Session.{Insights, Lifecycle, Presentation, Recording, Summary, Transcript, Transcription}
 
   @type t :: %__MODULE__{
           events: :queue.queue(Jotty.Session.Events.message()),
@@ -9,31 +9,23 @@ defmodule Jotty.Session.State do
           recording: Recording.t(),
           transcription: Transcription.t(),
           transcript: Transcript.t(),
-          assistant: Assistant.t(),
+          insights: Insights.t(),
           summary: Summary.t(),
           presentation: Presentation.t()
         }
 
-  @enforce_keys [:lifecycle, :recording, :transcription, :transcript, :assistant, :summary, :presentation]
-  defstruct [
-    :lifecycle,
-    :recording,
-    :transcription,
-    :transcript,
-    :assistant,
-    :summary,
-    :presentation,
-    events: :queue.new()
-  ]
+  @enforce_keys ~w(lifecycle recording transcription transcript insights summary presentation)a
+  defstruct ~w(lifecycle recording transcription transcript insights summary presentation)a ++
+              [events: :queue.new()]
 
   @spec new(keyword()) :: t()
   def new(options) do
     %__MODULE__{
-      lifecycle: Lifecycle.new(options),
+      lifecycle: %Lifecycle{},
       recording: Recording.new(options),
       transcription: Transcription.new(options),
-      transcript: Transcript.new(options),
-      assistant: Assistant.new(options),
+      transcript: %Transcript{},
+      insights: %Insights{},
       summary: Summary.new(options),
       presentation: Presentation.new(options)
     }

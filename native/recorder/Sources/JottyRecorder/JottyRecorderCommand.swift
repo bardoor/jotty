@@ -8,8 +8,18 @@ struct JottyRecorderCommand {
   static func main() async {
     signal(SIGPIPE, SIG_IGN)
 
+    if Array(CommandLine.arguments.dropFirst()) == ["--list-microphones"] {
+      do {
+        try writeMicrophones()
+        return
+      } catch {
+        writeError("Error: \(error.localizedDescription)")
+        exit(EXIT_FAILURE)
+      }
+    }
+
     guard let arguments = RecorderArguments.parse(Array(CommandLine.arguments.dropFirst())) else {
-      writeError("Usage: jotty-recorder [--live | --aec-spike] OUTPUT_DIRECTORY")
+      writeError("Usage: jotty-recorder [--live [--microphone-device-id ID]] OUTPUT_DIRECTORY")
       exit(EX_USAGE)
     }
 
@@ -23,6 +33,7 @@ struct JottyRecorderCommand {
       let recorder = Recorder(
         paths: paths,
         liveMixer: liveMixer,
+        microphoneDeviceID: arguments.microphoneDeviceID,
         onFailure: { terminationWaiter.fail($0) }
       )
       try await recorder.start()
@@ -34,7 +45,7 @@ struct JottyRecorderCommand {
         throw error
       }
 
-      writeError("Recording system audio and default microphone. Press Ctrl-C to stop.")
+      writeError("Recording system audio and microphone. Press Ctrl-C to stop.")
 
       do {
         try await terminationWaiter.wait()
@@ -45,11 +56,7 @@ struct JottyRecorderCommand {
 
       writeError("Stopping recording...")
       try await recorder.stop()
-      writeError("Saved system.m4a and microphone.m4a")
-
-      if arguments.mode == .aecSpike {
-        writeError("Saved microphone-aec.wav")
-      }
+      writeError("Saved system.m4a, microphone.m4a, microphone-aec.wav, and audio.m4a")
     } catch {
       writeError("Error: \(error.localizedDescription)")
       exit(EXIT_FAILURE)
@@ -65,15 +72,18 @@ struct JottyRecorderCommand {
     case .archive:
       return nil
     case .live:
-      return LiveAudioMixer(packetWriter: packetWriter)
-    case .aecSpike:
-      guard let libraryPath = ProcessInfo.processInfo.environment["JOTTY_AEC_LIBRARY_PATH"] else {
-        throw AECSpikeError.missingLibraryPath
+      guard let executableURL = Bundle.main.executableURL else {
+        throw AECError.executableURLUnavailable
       }
 
-      return AECQualityCoordinator(
-        processor: try DynamicAECProcessor(libraryPath: libraryPath),
-        writer: try WaveFileWriter(outputURL: paths.aecMicrophoneAudio)
+      let libraryURL = DynamicAECProcessor.libraryURL(adjacentTo: executableURL)
+      return AECCoordinator(
+        processor: try DynamicAECProcessor(libraryPath: libraryURL.path),
+        artifact: try WaveFileWriter(outputURL: paths.aecMicrophoneAudio),
+        output: LiveAudioMixer(
+          packetWriter: packetWriter,
+          playbackWriter: try M4APCMWriter(outputURL: paths.playbackAudio)
+        )
       )
     }
   }
@@ -96,6 +106,18 @@ struct JottyRecorderCommand {
     }
   }
 
+  private static func writeMicrophones() throws {
+    let devices = AVCaptureDevice.DiscoverySession(
+      deviceTypes: [.microphone, .external],
+      mediaType: .audio,
+      position: .unspecified
+    ).devices
+    let microphones = devices.map { MicrophoneDevice(id: $0.uniqueID, name: $0.localizedName) }
+    let data = try JSONEncoder().encode(microphones)
+    FileHandle.standardOutput.write(data)
+    FileHandle.standardOutput.write(Data("\n".utf8))
+  }
+
   private static func writeError(_ message: String) {
     let data = Data("\(message)\n".utf8)
 
@@ -106,11 +128,16 @@ struct JottyRecorderCommand {
   }
 }
 
-enum AECSpikeError: Swift.Error, LocalizedError {
-  case missingLibraryPath
+private struct MicrophoneDevice: Encodable {
+  let id: String
+  let name: String
+}
+
+enum AECError: Swift.Error, LocalizedError {
+  case executableURLUnavailable
 
   var errorDescription: String? {
-    "JOTTY_AEC_LIBRARY_PATH is required for --aec-spike"
+    "Cannot locate the recorder executable"
   }
 }
 

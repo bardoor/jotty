@@ -1,13 +1,26 @@
-import { app, BrowserWindow, dialog } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHmac, randomBytes } from "node:crypto";
 import net from "node:net";
 import path from "node:path";
 import readline from "node:readline";
 
 import { forwardBackendOutput } from "./backend";
+import { installSettingsIpc } from "./settings-ipc";
 import { windowFrameOptions } from "./window";
 
 let backend: ChildProcessWithoutNullStreams | null = null;
+const contextApprovalSecret = randomBytes(32).toString("hex");
+
+installSettingsIpc(
+  ipcMain,
+  dialog,
+  (sender) => BrowserWindow.fromWebContents(sender),
+  (directory) => ({
+    path: directory,
+    approval: createHmac("sha256", contextApprovalSecret).update(directory).digest("hex")
+  })
+);
 
 async function reservePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -27,14 +40,39 @@ async function reservePort(): Promise<number> {
   });
 }
 
-async function startBackend(): Promise<string> {
-  const port = await reservePort();
-  const executable = app.isPackaged
+function backendExecutable(): string {
+  return app.isPackaged
     ? path.join(process.resourcesPath, "jotty")
     : path.resolve(__dirname, "../../../jotty");
+}
+
+async function migrate(executable: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const migration = spawn(executable, ["migrate"], {
+      cwd: path.dirname(executable),
+      env: process.env,
+      stdio: ["ignore", "ignore", "pipe"]
+    });
+    let error = "";
+
+    migration.stderr.on("data", (data) => { error += data.toString(); });
+    migration.once("error", reject);
+    migration.once("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(error.trim() || `Jotty migration exited with status ${code}`));
+    });
+  });
+}
+
+async function startBackend(): Promise<string> {
+  const port = await reservePort();
+  const executable = backendExecutable();
+
+  await migrate(executable);
 
   backend = spawn(executable, ["serve", "--port", String(port)], {
     cwd: path.dirname(executable),
+    env: { ...process.env, JOTTY_CONTEXT_APPROVAL_SECRET: contextApprovalSecret },
     stdio: "pipe"
   });
   backend.stdin.end();

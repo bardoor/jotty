@@ -15,7 +15,13 @@ defmodule Jotty.LogFormatterTest do
       }
     }
 
-    assert event |> Jotty.LogFormatter.format(%{}) |> IO.iodata_to_binary() |> Jason.decode!() == %{
+    payload =
+      event
+      |> Jotty.LogFormatter.format(%{})
+      |> IO.iodata_to_binary()
+      |> Jason.decode!()
+
+    assert payload == %{
              "event" => "failed",
              "level" => "error",
              "provider" => "soniox",
@@ -38,7 +44,11 @@ defmodule Jotty.LogFormatterTest do
       meta: %{time: 0}
     }
 
-    decoded = event |> Jotty.LogFormatter.format(%{}) |> IO.iodata_to_binary() |> Jason.decode!()
+    decoded =
+      event
+      |> Jotty.LogFormatter.format(%{})
+      |> IO.iodata_to_binary()
+      |> Jason.decode!()
 
     assert decoded["event"] =~ "SIGTERM received"
     assert decoded["level"] == "notice"

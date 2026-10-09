@@ -14,9 +14,6 @@ defmodule Jotty.Session.Transcript do
 
   defstruct chunks: []
 
-  @spec new(keyword()) :: t()
-  def new(_options), do: %__MODULE__{}
-
   @impl true
   def subscriptions, do: [UtteranceCompleted, TranscriptionFinished]
 

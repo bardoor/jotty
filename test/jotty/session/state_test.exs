@@ -2,9 +2,10 @@ defmodule Jotty.Session.StateTest do
   use ExUnit.Case, async: true
 
   alias Jotty.Recording, as: RecordingArtifact
+  alias Jotty.Session.Events.StartSession
 
   alias Jotty.Session.{
-    Assistant,
+    Insights,
     Lifecycle,
     Presentation,
     Recording,
@@ -55,9 +56,27 @@ defmodule Jotty.Session.StateTest do
 
     assert owner == self()
     assert %Transcript{chunks: []} = state.transcript
-    assert %Assistant{contexts: ["context.md"], pid: nil} = state.assistant
+    assert %Insights{contexts: [], pid: nil} = state.insights
     assert %Summary{summarizer: FakeSummarizer} = state.summary
     assert %Presentation{event_sinks: [sink], status: :idle} = state.presentation
     assert sink == self()
+  end
+
+  test "applies the typed recording settings snapshot to handler-owned slices" do
+    recording = %RecordingArtifact{
+      directory: "/recording",
+      system_audio: "/recording/system.m4a",
+      microphone_audio: "/recording/microphone.m4a",
+      transcript: "/recording/transcript.txt",
+      summary: "/recording/summary.md"
+    }
+
+    state = State.new(api_key: "key", recorder: "/recorder", recording: recording)
+    command = %StartSession{contexts: ["/project"], microphone_device_id: "device-1"}
+    state = Recording.handle_message(command, state)
+    state = Insights.handle_message(command, state)
+
+    assert state.recording.options[:microphone_device_id] == "device-1"
+    assert state.insights.contexts == ["/project"]
   end
 end

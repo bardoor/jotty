@@ -4,6 +4,7 @@ defmodule Jotty do
   alias Jotty.Recording
   alias Jotty.Session.Events.{RecordingStarted, SessionCompleted, SessionFailed}
   alias Jotty.Session.Server
+  alias Jotty.Settings.RecordingConfiguration
 
   @spec record(Path.t(), Path.t(), String.t(), DateTime.t()) :: {:ok, Recording.t()} | {:error, term()}
   def record(home, recorder_executable, soniox_api_key, recorded_at) do
@@ -15,22 +16,26 @@ defmodule Jotty do
   def record(home, recorder_executable, soniox_api_key, recorded_at, options) do
     recording = Recording.create!(home, recorded_at)
     external_sink = Keyword.get(options, :event_sink)
-    event_sinks = [self() | List.wrap(external_sink)] |> Enum.uniq()
+    event_sinks = Enum.uniq([self() | List.wrap(external_sink)])
 
     session_options =
       options
       |> Keyword.get(:session_options, [])
       |> Keyword.merge(
         api_key: soniox_api_key,
-        contexts: Keyword.get(options, :contexts, []),
         event_sinks: event_sinks,
         recorder: recorder_executable,
         recorder_options: [stop: :message],
         recording: recording
       )
 
+    configuration = %RecordingConfiguration{
+      contexts: Keyword.get(options, :contexts, []),
+      microphone_device_id: nil
+    }
+
     with {:ok, session} <- Server.start_link(session_options),
-         :ok <- Server.start_recording(session) do
+         :ok <- Server.start_recording(session, configuration) do
       result = await_result(session, Keyword.get(options, :recorder_stop, :stdio))
       GenServer.stop(session)
       result

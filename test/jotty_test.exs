@@ -9,7 +9,7 @@ defmodule JottyTest do
   @tag :tmp_dir
   test "records, transcribes one realtime mix, and summarizes one call", %{tmp_dir: home} do
     recorder = fake_live_recorder!(home)
-    fake_codex!(home)
+    fake_hermes!(home)
 
     result =
       capture_io("\n", fn ->
@@ -36,11 +36,11 @@ defmodule JottyTest do
   end
 
   @tag :tmp_dir
-  test "records with live context assistance while preserving post-processing", %{tmp_dir: home} do
+  test "records with live insight search while preserving post-processing", %{tmp_dir: home} do
     recorder = fake_live_recorder!(home)
     context_directory = Path.join(home, "project")
     File.mkdir_p!(context_directory)
-    fake_codex!(home)
+    fake_hermes!(home)
 
     result =
       capture_io("\n", fn ->
@@ -66,15 +66,15 @@ defmodule JottyTest do
     assert File.read!(recording.transcript) == "Speaker 1: What does the project use?"
     assert File.read!(recording.summary) == "# Summary\nRelease approved.\n"
 
-    assistant = File.read!(Path.join(recording.directory, "assistant.md"))
-    assert assistant =~ "## Find project facts"
-    assert assistant =~ "What does the project use?"
+    insights = File.read!(Path.join(recording.directory, "insights.md"))
+    assert insights =~ "## Find project facts"
+    assert insights =~ "What does the project use?"
   end
 
   @tag :tmp_dir
   test "records with realtime transcription without project context", %{tmp_dir: home} do
     recorder = fake_live_recorder!(home)
-    fake_codex!(home)
+    fake_hermes!(home)
     receiver = self()
 
     task =
@@ -100,7 +100,7 @@ defmodule JottyTest do
     assert {:ok, %Recording{} = recording} = Task.await(task, 5_000)
     assert File.read!(recording.transcript) == "Speaker 1: What does the project use?"
     assert File.read!(recording.summary) == "# Summary\nRelease approved.\n"
-    refute File.exists?(Path.join(recording.directory, "assistant.md"))
+    refute File.exists?(Path.join(recording.directory, "insights.md"))
   end
 
   defp fake_live_recorder!(home) do
@@ -138,42 +138,37 @@ defmodule JottyTest do
     path
   end
 
-  defp fake_codex!(home) do
+  defp fake_hermes!(home) do
     bin_directory = Path.join(home, "bin")
-    path = Path.join(bin_directory, "codex")
+    path = Path.join(bin_directory, "hermes")
     File.mkdir!(bin_directory)
 
     File.write!(path, """
     #!/bin/sh
-    output=""
-    schema=0
+    query_file=''
     while [ "$#" -gt 0 ]; do
-      if [ "$1" = "--output-last-message" ]; then
+      if [ "$1" = "--query-file" ]; then
         shift
-        output="$1"
-      elif [ "$1" = "--output-schema" ]; then
-        schema=1
+        query_file="$1"
       fi
       shift
     done
-    /bin/cat >/dev/null
-    if [ "$schema" = "1" ]; then
-      /usr/bin/printf '%s' '{"decision":{"action":"search","query":"Find project facts"}}' > "$output"
-    else
-      /usr/bin/printf '# Summary\nRelease approved.\n' > "$output"
-    fi
+    prompt=$(/bin/cat "$query_file")
+    /usr/bin/printf '%s\n' '{"type":"system","subtype":"init"}'
+    case "$prompt" in
+      *"Decide whether"*)
+        /usr/bin/printf '%s\n' '{"type":"result","exit_code":0,"text":"{\\"decision\\":{\\"action\\":\\"search\\",\\"query\\":\\"Find project facts\\"}}"}'
+        ;;
+      *"Answer this project-context lookup request"*)
+        /usr/bin/printf '%s\n' '{"type":"result","exit_code":0,"text":"Project facts."}'
+        ;;
+      *)
+        /usr/bin/printf '%s\n' '{"type":"result","exit_code":0,"text":"# Summary\\nRelease approved."}'
+        ;;
+    esac
     """)
 
     File.chmod!(path, 0o755)
-
-    hermes = Path.join(bin_directory, "hermes")
-
-    File.write!(hermes, """
-    #!/bin/sh
-    /usr/bin/printf 'Project facts.\n'
-    """)
-
-    File.chmod!(hermes, 0o755)
 
     original_path = System.get_env("PATH")
     System.put_env("PATH", "#{bin_directory}:#{original_path}")

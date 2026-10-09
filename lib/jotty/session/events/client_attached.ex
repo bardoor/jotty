@@ -1,8 +1,8 @@
 defmodule Jotty.Session.Events.ClientAttached do
   @moduledoc false
 
-  @enforce_keys [:client]
-  defstruct @enforce_keys
-
   @type t :: %__MODULE__{client: pid()}
+
+  @enforce_keys ~w(client)a
+  defstruct ~w(client)a
 end

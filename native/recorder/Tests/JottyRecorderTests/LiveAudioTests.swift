@@ -95,6 +95,27 @@ private final class FixedConverter: PCMConverting, @unchecked Sendable {
   }
 }
 
+private final class FailingPCMArtifact: PCMWriting, @unchecked Sendable {
+  func append(_ pcm: Data) throws {
+    throw TestFailure.expected
+  }
+
+  func finish() throws {}
+}
+
+private final class RecordingPCMArtifact: PCMWriting, @unchecked Sendable {
+  private(set) var chunks: [Data] = []
+  private(set) var finished = false
+
+  func append(_ pcm: Data) throws {
+    chunks.append(pcm)
+  }
+
+  func finish() throws {
+    finished = true
+  }
+}
+
 private final class RecordingLiveMixer: LiveAudioMixing, @unchecked Sendable {
   private(set) var presentationTimes: [CMTime] = []
 
@@ -128,12 +149,59 @@ struct LiveAudioTests {
     let packetWriter = RecordingPacketWriter()
     let mixer = LiveAudioMixer(packetWriter: packetWriter)
 
-    try mixer.append(pcm([1_000, 30_000]), source: .system)
+    try mixer.append(pcm([1_000, 30_000]), source: .system, presentationTime: .zero)
     #expect(packetWriter.events.isEmpty)
 
-    try mixer.append(pcm([2_000, 10_000]), source: .microphone)
+    try mixer.append(pcm([2_000, 10_000]), source: .microphone, presentationTime: .zero)
 
     #expect(packetWriter.events == [.pcm(pcm([3_000, Int16.max]))])
+  }
+
+  @Test
+  func fansOutTheExactEmittedPCMToPlaybackAndFinalizesIt() throws {
+    let packetWriter = RecordingPacketWriter()
+    let playbackWriter = RecordingPCMArtifact()
+    let mixer = LiveAudioMixer(packetWriter: packetWriter, playbackWriter: playbackWriter)
+
+    try mixer.append(pcm([30_000, -30_000]), source: .system, presentationTime: .zero)
+    try mixer.append(pcm([10_000, -10_000]), source: .microphone, presentationTime: .zero)
+    try mixer.finish(source: .system)
+    try mixer.finish(source: .microphone)
+
+    let expected = pcm([Int16.max, Int16.min])
+    #expect(packetWriter.events == [.pcm(expected)])
+    #expect(playbackWriter.chunks == [expected])
+    #expect(playbackWriter.finished)
+  }
+
+  @Test
+  func playbackFailureRemainsTerminalAtRecorderFinalization() throws {
+    let packetWriter = RecordingPacketWriter()
+    let mixer = LiveAudioMixer(packetWriter: packetWriter, playbackWriter: FailingPCMArtifact())
+
+    try mixer.append(pcm([1_000]), source: .system, presentationTime: .zero)
+    #expect(throws: TestFailure.self) {
+      try mixer.append(pcm([2_000]), source: .microphone, presentationTime: .zero)
+    }
+    #expect(packetWriter.events == [.pcm(pcm([3_000]))])
+    #expect(throws: TestFailure.self) {
+      try mixer.finalize()
+    }
+  }
+
+  @Test
+  func alignsMixedPCMByPresentationTime() throws {
+    let packetWriter = RecordingPacketWriter()
+    let mixer = LiveAudioMixer(packetWriter: packetWriter)
+
+    try mixer.append(pcm([1_000, 1_000]), source: .system, presentationTime: .zero)
+    try mixer.append(
+      pcm([2_000]),
+      source: .microphone,
+      presentationTime: CMTime(value: 1, timescale: 16_000)
+    )
+
+    #expect(packetWriter.events == [.pcm(pcm([1_000])), .pcm(pcm([3_000]))])
   }
 
   @Test
@@ -141,8 +209,8 @@ struct LiveAudioTests {
     let packetWriter = RecordingPacketWriter()
     let mixer = LiveAudioMixer(packetWriter: packetWriter)
 
-    try mixer.append(pcm([1_000, 2_000]), source: .system)
-    try mixer.append(pcm([3_000]), source: .microphone)
+    try mixer.append(pcm([1_000, 2_000]), source: .system, presentationTime: .zero)
+    try mixer.append(pcm([3_000]), source: .microphone, presentationTime: .zero)
     try mixer.finish(source: .microphone)
     try mixer.finish(source: .system)
 
@@ -201,7 +269,7 @@ struct LiveAudioTests {
       mixer: mixer
     )
     let sampleBuffer = try syntheticSampleBuffer(frameCount: 480)
-    try mixer.append(Data(repeating: 0, count: 8), source: .system)
+    try mixer.append(Data(repeating: 0, count: 8), source: .system, presentationTime: .zero)
 
     for _ in 1 ... 4 {
       emitter.process(sampleBuffer)

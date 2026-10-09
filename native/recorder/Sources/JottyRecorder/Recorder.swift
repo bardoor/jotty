@@ -55,6 +55,8 @@ final class Recorder: NSObject, SCStreamDelegate, @unchecked Sendable {
 
   private let systemOutput: AudioStreamOutput
   private let microphoneOutput: AudioStreamOutput
+  private let liveMixer: LiveAudioMixing?
+  private let microphoneDeviceID: String?
   private var stream: SCStream?
   private var streamFailure: Swift.Error?
   private let failureLock = NSLock()
@@ -63,9 +65,12 @@ final class Recorder: NSObject, SCStreamDelegate, @unchecked Sendable {
   init(
     paths: RecordingPaths,
     liveMixer: LiveAudioMixing?,
+    microphoneDeviceID: String? = nil,
     onFailure: @escaping @Sendable (Swift.Error) -> Void
   ) {
     self.onFailure = onFailure
+    self.liveMixer = liveMixer
+    self.microphoneDeviceID = microphoneDeviceID
     systemOutput = AudioStreamOutput(
       label: "dev.jotty.recorder.system-audio",
       outputURL: paths.systemAudio,
@@ -110,6 +115,7 @@ final class Recorder: NSObject, SCStreamDelegate, @unchecked Sendable {
     configuration.sampleRate = 48_000
     configuration.channelCount = 1
     configuration.captureMicrophone = true
+    configuration.microphoneCaptureDeviceID = microphoneDeviceID
     configuration.excludesCurrentProcessAudio = true
 
     let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
@@ -151,6 +157,7 @@ final class Recorder: NSObject, SCStreamDelegate, @unchecked Sendable {
       async let systemFinish: Void = systemOutput.finish()
       async let microphoneFinish: Void = microphoneOutput.finish()
       _ = try await (systemFinish, microphoneFinish)
+      try liveMixer?.finalize()
     } catch {
       throw captureError ?? capturedStreamFailure() ?? error
     }

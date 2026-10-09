@@ -3,6 +3,15 @@ defmodule Jotty.Desktop.ServerTest do
 
   alias Jotty.Desktop.Server
   alias Jotty.Recording
+  alias Jotty.Repo
+  alias Jotty.Sessions.{Session, SessionContext, TranscriptChunk}
+
+  setup do
+    Repo.delete_all(TranscriptChunk)
+    Repo.delete_all(SessionContext)
+    Repo.delete_all(Session)
+    :ok
+  end
 
   defmodule Client do
     use WebSockex
@@ -20,7 +29,7 @@ defmodule Jotty.Desktop.ServerTest do
   end
 
   defmodule FakeSummarizer do
-    def summarize(_transcript, summary), do: File.write(summary, "# Summary\nDone.\n")
+    def summarize(_transcript, summary, _on_event), do: File.write(summary, "# Summary\nDone.\n")
   end
 
   @tag :tmp_dir
@@ -28,7 +37,7 @@ defmodule Jotty.Desktop.ServerTest do
     port = free_port()
 
     assert {:ok, server} =
-             Server.start(port: port, session_options: session_options(directory, "/unused"))
+             Server.start(port: port, home: directory, session_options: session_options(directory, "/unused"))
 
     assert %{status: 200, body: "ok"} = Req.get!("http://127.0.0.1:#{port}/health")
     assert :ok = Server.stop(server)
@@ -40,20 +49,23 @@ defmodule Jotty.Desktop.ServerTest do
     executable = fake_live_recorder!(directory)
 
     assert {:ok, server} =
-             Server.start(port: port, session_options: session_options(directory, executable))
+             Server.start(port: port, home: directory, session_options: session_options(directory, executable))
 
     assert {:ok, client} = Client.start("ws://127.0.0.1:#{port}/ws", self())
-    assert_receive {:desktop_frame, %{"type" => "snapshot", "status" => "idle"}}
+    assert_receive {:desktop_frame, %{"type" => "snapshot", "status" => "idle"}}, 1_000
 
-    :ok = WebSockex.send_frame(client, {:text, ~s({"type":"start"})})
+    :ok = WebSockex.send_frame(client, {:text, ~s({"type":"start_session"})})
     assert_receive {:desktop_frame, %{"type" => "state", "status" => "starting"}}
     assert_receive {:transport_started, transport, _owner, :mixed, _configuration}
     assert_receive {:desktop_frame, %{"type" => "state", "status" => "recording"}}, 2_000
 
-    :ok = WebSockex.send_frame(client, {:text, ~s({"type":"stop"})})
+    :ok = WebSockex.send_frame(client, {:text, ~s({"type":"stop_session"})})
     assert_receive {:desktop_frame, %{"type" => "state", "status" => "stopping"}}
     assert_receive {:transport_finished, ^transport, :mixed}, 2_000
-    assert File.exists?(Path.join(directory, "stopped"))
+
+    assert_eventually(fn ->
+      Path.wildcard(Path.join([directory, ".jotty", "recordings", "*", "stopped"])) != []
+    end)
 
     send(transport, {:text, ~s({"finished":true})})
 
@@ -61,9 +73,29 @@ defmodule Jotty.Desktop.ServerTest do
                     %{
                       "type" => "summary_ready",
                       "markdown" => "# Summary\nDone.\n",
-                      "recording_directory" => ^directory
+                      "recording_directory" => recording_directory
                     }},
                    2_000
+
+    assert String.starts_with?(recording_directory, Path.join([directory, ".jotty", "recordings"]))
+
+    assert_receive {:desktop_frame,
+                    %{
+                      "type" => "session_opened",
+                      "session" => %{"id" => first_id, "status" => "completed", "playback_url" => playback_url}
+                    }},
+                   2_000
+
+    assert playback_url =~ "/sessions/#{first_id}/audio"
+
+    :ok = WebSockex.send_frame(client, {:text, ~s({"type":"start_session"})})
+    assert_receive {:desktop_frame, %{"type" => "state", "status" => "starting"}}
+    assert_receive {:transport_started, second_transport, _owner, :mixed, _configuration}
+    refute second_transport == transport
+
+    [second, first | _rest] = Jotty.Sessions.Catalog.all()
+    assert first.id == first_id
+    refute second.id == first_id
 
     WebSockex.cast(client, :close)
     assert :ok = Server.stop(server)
@@ -75,18 +107,21 @@ defmodule Jotty.Desktop.ServerTest do
     executable = fake_live_recorder!(directory)
 
     assert {:ok, server} =
-             Server.start(port: port, session_options: session_options(directory, executable))
+             Server.start(port: port, home: directory, session_options: session_options(directory, executable))
 
     assert {:ok, client} = Client.start("ws://127.0.0.1:#{port}/ws", self())
-    assert_receive {:desktop_frame, %{"type" => "snapshot", "status" => "idle"}}
+    assert_receive {:desktop_frame, %{"type" => "snapshot", "status" => "idle"}}, 1_000
 
-    :ok = WebSockex.send_frame(client, {:text, ~s({"type":"start"})})
+    :ok = WebSockex.send_frame(client, {:text, ~s({"type":"start_session"})})
     assert_receive {:transport_started, transport, _owner, :mixed, _configuration}
     assert_receive {:desktop_frame, %{"type" => "state", "status" => "recording"}}, 2_000
 
     assert :ok = Server.stop(server)
     assert_receive {:transport_stopped, ^transport, :mixed}, 2_000
-    assert_eventually(fn -> File.exists?(Path.join(directory, "stopped")) end)
+
+    assert_eventually(fn ->
+      Path.wildcard(Path.join([directory, ".jotty", "recordings", "*", "stopped"])) != []
+    end)
   end
 
   defp session_options(directory, executable) do
@@ -140,11 +175,17 @@ defmodule Jotty.Desktop.ServerTest do
     import sys
     import time
 
+    if sys.argv[1:] == ["--list-microphones"]:
+        print('[{"id":"test-mic","name":"Test Mic"}]')
+        raise SystemExit(0)
+
     output = pathlib.Path(sys.argv[-1])
 
     def stop(_signal, _frame):
         (output / "system.m4a").touch()
         (output / "microphone.m4a").touch()
+        (output / "microphone-aec.wav").touch()
+        (output / "audio.m4a").write_bytes(b"audio")
         (output / "stopped").touch()
         raise SystemExit(0)
 

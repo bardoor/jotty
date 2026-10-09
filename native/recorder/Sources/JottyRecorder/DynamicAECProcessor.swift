@@ -50,6 +50,10 @@ final class DynamicAECProcessor: AECProcessing, @unchecked Sendable {
   private let processRenderFunction: ProcessRender
   private let processCaptureFunction: ProcessCapture
 
+  static func libraryURL(adjacentTo executableURL: URL) -> URL {
+    executableURL.deletingLastPathComponent().appending(path: "libJottyAEC.dylib")
+  }
+
   init(libraryPath: String) throws {
     guard let library = dlopen(libraryPath, RTLD_NOW | RTLD_LOCAL) else {
       throw Error.cannotLoadLibrary(String(cString: dlerror()))

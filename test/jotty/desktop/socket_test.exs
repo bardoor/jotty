@@ -1,26 +1,16 @@
 defmodule Jotty.Desktop.SocketTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
 
-  alias Jotty.Desktop.Socket
-  alias Jotty.Recording
-  alias Jotty.Session.Server
+  alias Jotty.Desktop.{Controller, Socket}
 
   @tag :tmp_dir
-  test "sends the current snapshot and forwards presentation events", %{tmp_dir: directory} do
-    recording = %Recording{
-      directory: directory,
-      system_audio: Path.join(directory, "system.m4a"),
-      microphone_audio: Path.join(directory, "microphone.m4a"),
-      transcript: Path.join(directory, "transcript.txt"),
-      summary: Path.join(directory, "summary.md")
-    }
+  test "sends the controller snapshot and forwards presentation events", %{tmp_dir: directory} do
+    {:ok, controller} = controller(directory)
+    context = %{controller: controller, recorder: "/unused", context_approval_secret: nil}
 
-    {:ok, session} =
-      Server.start_link(api_key: "test-key", recorder: "/unused", recording: recording)
-
-    assert {:push, {:text, snapshot}, %{session: ^session} = state} = Socket.init(session)
+    assert {:push, {:text, snapshot}, %{controller: ^controller} = state} = Socket.init(context)
     assert %{"type" => "snapshot", "status" => "idle"} = Jason.decode!(snapshot)
 
     event = %{type: :state, status: :starting}
@@ -29,24 +19,18 @@ defmodule Jotty.Desktop.SocketTest do
              Socket.handle_info({:jotty_desktop_event, event}, state)
 
     assert Jason.decode!(encoded_event) == %{"type" => "state", "status" => "starting"}
-    GenServer.stop(session)
+    GenServer.stop(controller)
   end
 
   @tag :tmp_dir
-  test "logs the desktop connection with the session correlation", %{tmp_dir: directory} do
-    recording = %Recording{
-      directory: directory,
-      system_audio: Path.join(directory, "system.m4a"),
-      microphone_audio: Path.join(directory, "microphone.m4a"),
-      transcript: Path.join(directory, "transcript.txt"),
-      summary: Path.join(directory, "summary.md")
-    }
-
-    {:ok, session} = Server.start_link(api_key: "test-key", recorder: "/unused", recording: recording)
+  test "logs the desktop connection with controller correlation", %{tmp_dir: directory} do
+    {:ok, controller} = controller(directory)
 
     log =
-      capture_log([metadata: [:scope, :session_id, :reason]], fn ->
-        assert {:push, {:text, _snapshot}, state} = Socket.init(session)
+      capture_log([metadata: ~w(scope controller_id reason)a], fn ->
+        assert {:push, {:text, _snapshot}, state} =
+                 Socket.init(%{controller: controller, recorder: "/unused", context_approval_secret: nil})
+
         assert :ok = Socket.terminate(:closed, state)
         Logger.flush()
       end)
@@ -54,8 +38,17 @@ defmodule Jotty.Desktop.SocketTest do
     assert log =~ "connected"
     assert log =~ "disconnected"
     assert log =~ "scope=desktop"
-    assert log =~ "session_id=#{inspect(session)}"
+    assert log =~ "controller_id=#{inspect(controller)}"
     assert log =~ "reason=:closed"
-    GenServer.stop(session)
+    GenServer.stop(controller)
+  end
+
+  defp controller(home) do
+    Controller.start_link(
+      home: home,
+      recorder: "/unused",
+      session_options: [api_key: "test-key"],
+      audio_base_url: "http://127.0.0.1:4765"
+    )
   end
 end

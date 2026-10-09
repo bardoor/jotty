@@ -52,6 +52,40 @@ defmodule Jotty.RecorderTest do
   end
 
   @tag :tmp_dir
+  test "passes a selected AVFoundation microphone ID to the native recorder", %{tmp_dir: directory} do
+    executable = Path.join(directory, "recorder")
+    write_fake_recorder(executable, [<<1>>])
+    receiver = self()
+
+    capture_io("\n", fn ->
+      assert :ok =
+               Recorder.record_live(executable, directory, &send(receiver, {:live, &1}),
+                 microphone_device_id: "av-device-1"
+               )
+    end)
+
+    assert_receive {:live, :ready}
+
+    assert File.read!(Path.join(directory, "arguments")) ==
+             "--live\n--microphone-device-id\nav-device-1\n#{directory}\n"
+  end
+
+  @tag :tmp_dir
+  test "enumerates native microphones by unique ID and localized name", %{tmp_dir: directory} do
+    executable = Path.join(directory, "recorder")
+
+    File.write!(executable, """
+    #!/bin/sh
+    printf '[{"id":"av-device-1","name":"Desk Mic"}]\\n'
+    """)
+
+    File.chmod!(executable, 0o755)
+
+    assert {:ok, [%Jotty.Settings.Microphone{id: "av-device-1", name: "Desk Mic"}]} =
+             Recorder.list_microphones(executable)
+  end
+
+  @tag :tmp_dir
   test "stops a live recording when its owner sends stop", %{tmp_dir: directory} do
     executable = Path.join(directory, "recorder")
     write_fake_recorder(executable, [<<1>>])
@@ -88,7 +122,12 @@ defmodule Jotty.RecorderTest do
                termination_timeout: 20
              )
 
-    pid = directory |> Path.join("pid") |> File.read!() |> String.trim()
+    pid =
+      directory
+      |> Path.join("pid")
+      |> File.read!()
+      |> String.trim()
+
     assert {_, 1} = System.cmd("/bin/kill", ["-0", pid], stderr_to_stdout: true)
   end
 
@@ -133,7 +172,12 @@ defmodule Jotty.RecorderTest do
     send(task.pid, :stop)
     assert {:error, :recorder_stop_timeout} = Task.await(task)
 
-    pid = directory |> Path.join("pid") |> File.read!() |> String.trim()
+    pid =
+      directory
+      |> Path.join("pid")
+      |> File.read!()
+      |> String.trim()
+
     assert {_, 1} = System.cmd("/bin/kill", ["-0", pid], stderr_to_stdout: true)
   end
 

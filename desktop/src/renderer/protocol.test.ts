@@ -19,12 +19,16 @@ describe("desktop protocol state", () => {
       },
       realtime_error: null,
       summary: null,
+      activities: [
+        { stage: "summary", status: "running", message: "Writing summary" }
+      ],
       recording_directory: null
     });
 
     expect(state.status).toBe("recording");
     expect(state.utterances[0].chunks[0].text).toBe("Welcome");
     expect(state.preview?.chunks[0].text).toBe("Hello");
+    expect(state.activities.at(-1)?.message).toBe("Writing summary");
   });
 
   it("replaces provisional text with the completed utterance", () => {
@@ -42,22 +46,47 @@ describe("desktop protocol state", () => {
     expect(completed.utterances.at(-1)?.chunks[0].text).toBe("Final");
   });
 
+  it("appends Hermes activity and resets it for a new session", () => {
+    const active = reduceServerEvent(initialState, {
+      type: "hermes_activity",
+      stage: "summary",
+      status: "running",
+      message: "Reading transcript.txt"
+    });
+
+    expect(active.activities).toHaveLength(1);
+
+    const starting = reduceServerEvent(active, { type: "state", status: "starting" });
+    expect(starting.activities).toEqual([]);
+  });
+
   it("tracks recording lifecycle, summary, and failure events", () => {
     const starting = reduceServerEvent(initialState, { type: "state", status: "starting" });
     const recording = reduceServerEvent(starting, { type: "state", status: "recording" });
     const completed = reduceServerEvent(recording, {
-      type: "summary_ready",
-      markdown: "# Summary",
-      recording_directory: "/recording"
+      type: "session_opened",
+      session: {
+        id: "4b119ce6-d02b-41f7-9368-433f59db56a7",
+        title: "Planning",
+        status: "completed",
+        failure: null,
+        started_at: "2026-10-03T09:00:00Z",
+        completed_at: "2026-10-03T09:01:00Z",
+        duration_ms: 60_000,
+        transcript_chunks: [],
+        transcript_available: true,
+        summary_markdown: "# Summary",
+        playback_url: "/sessions/id/audio",
+        contexts: []
+      }
     });
     const failed = reduceServerEvent(initialState, { type: "failed", reason: "capture stopped" });
 
     expect(starting.status).toBe("starting");
     expect(recording.status).toBe("recording");
     expect(completed).toMatchObject({
-      status: "completed",
-      summary: "# Summary",
-      recordingDirectory: "/recording"
+      status: "recording",
+      selectedSession: { title: "Planning", summary_markdown: "# Summary" }
     });
     expect(failed).toMatchObject({ status: "failed", error: "capture stopped" });
   });
@@ -74,5 +103,24 @@ describe("desktop protocol state", () => {
       status: "recording",
       realtimeError: "microphone: :premature_close"
     });
+  });
+
+  it("loads persisted settings and unavailable resources", () => {
+    const state = reduceServerEvent(initialState, {
+      type: "settings_changed",
+      always_on_top: true,
+      microphone_device_id: "missing",
+      microphone_available: false,
+      microphones: [],
+      contexts: [{ id: "70bba3d8-cb9f-488a-b62e-da6247fc51b5", name: "gone", path: "/gone", position: 0, available: false }],
+      error: null
+    });
+
+    expect(state.settings).toMatchObject({
+      alwaysOnTop: true,
+      microphoneDeviceId: "missing",
+      microphoneAvailable: false
+    });
+    expect(state.settings?.contexts[0].available).toBe(false);
   });
 });

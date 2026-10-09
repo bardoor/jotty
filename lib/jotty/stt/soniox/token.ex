@@ -1,9 +1,6 @@
 defmodule Jotty.STT.Soniox.Token do
   @moduledoc false
 
-  @enforce_keys [:text, :final?, :start_ms, :end_ms, :speaker]
-  defstruct [:text, :final?, :start_ms, :end_ms, :speaker]
-
   @type t :: %__MODULE__{
           text: nonempty_binary(),
           final?: boolean(),
@@ -11,6 +8,9 @@ defmodule Jotty.STT.Soniox.Token do
           end_ms: non_neg_integer(),
           speaker: nonempty_binary()
         }
+
+  @enforce_keys ~w(text final? start_ms end_ms speaker)a
+  defstruct ~w(text final? start_ms end_ms speaker)a
 
   @spec new(map()) :: t() | :endpoint
   def new(%{"text" => "<end>", "is_final" => true}), do: :endpoint

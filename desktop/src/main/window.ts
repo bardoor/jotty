@@ -1,8 +1,8 @@
 import type { BrowserWindowConstructorOptions } from "electron";
 
 export const windowFrameOptions = {
-  width: 360,
-  height: 520,
+  width: 440,
+  height: 552,
   resizable: false,
   maximizable: false,
   titleBarStyle: "hiddenInset"

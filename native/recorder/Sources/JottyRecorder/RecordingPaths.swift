@@ -10,7 +10,7 @@ struct RecordingPaths {
       case .outputDirectoryDoesNotExist:
         "Output directory does not exist"
       case .outputFileAlreadyExists:
-        "system.m4a or microphone.m4a already exists"
+        "system.m4a, microphone.m4a, or audio.m4a already exists"
       }
     }
   }
@@ -18,6 +18,7 @@ struct RecordingPaths {
   let systemAudio: URL
   let microphoneAudio: URL
   let aecMicrophoneAudio: URL
+  let playbackAudio: URL
 
   init(directoryPath: String) throws {
     var isDirectory: ObjCBool = false
@@ -33,9 +34,11 @@ struct RecordingPaths {
     let directory = URL(filePath: directoryPath, directoryHint: .isDirectory)
     let systemAudio = directory.appending(path: "system.m4a")
     let microphoneAudio = directory.appending(path: "microphone.m4a")
+    let playbackAudio = directory.appending(path: "audio.m4a")
 
     guard !FileManager.default.fileExists(atPath: systemAudio.path),
-      !FileManager.default.fileExists(atPath: microphoneAudio.path)
+      !FileManager.default.fileExists(atPath: microphoneAudio.path),
+      !FileManager.default.fileExists(atPath: playbackAudio.path)
     else {
       throw Error.outputFileAlreadyExists
     }
@@ -43,5 +46,6 @@ struct RecordingPaths {
     self.systemAudio = systemAudio
     self.microphoneAudio = microphoneAudio
     aecMicrophoneAudio = directory.appending(path: "microphone-aec.wav")
+    self.playbackAudio = playbackAudio
   }
 }

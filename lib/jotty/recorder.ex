@@ -4,10 +4,7 @@ defmodule Jotty.Recorder do
   """
 
   alias Jotty.LiveAudioPacket
-
-  @startup_timeout 30_000
-  @stop_timeout 15_000
-  @termination_timeout 1_000
+  alias Jotty.Settings.Microphone
 
   @type live_event ::
           LiveAudioPacket.frame() | {:live_transport_failed, LiveAudioPacket.protocol_error()}
@@ -16,6 +13,25 @@ defmodule Jotty.Recorder do
           | {:error, {:recorder, non_neg_integer()}}
           | {:error, {:recorder_signal, non_neg_integer(), String.t()}}
           | {:error, :recorder_start_timeout | :recorder_stop_timeout}
+
+  @spec list_microphones(Path.t()) :: {:ok, [Microphone.t()]} | {:error, term()}
+  def list_microphones(executable) do
+    case System.cmd(executable, ["--list-microphones"], stderr_to_stdout: true) do
+      {output, 0} ->
+        microphones =
+          output
+          |> Jason.decode!()
+          |> Enum.map(fn %{"id" => id, "name" => name} -> %Microphone{id: id, name: name} end)
+
+        {:ok, microphones}
+
+      {output, status} ->
+        {:error, {:microphone_enumeration, status, String.trim(output)}}
+    end
+  rescue
+    error in ErlangError -> {:error, {:microphone_enumeration, error.original}}
+    error in Jason.DecodeError -> {:error, {:microphone_enumeration, error}}
+  end
 
   @doc """
   Runs the native recorder in archival-only mode and waits for its finalized exit status.
@@ -35,10 +51,14 @@ defmodule Jotty.Recorder do
 
   @spec record_live(Path.t(), Path.t(), (live_event() -> any()), keyword()) :: result()
   def record_live(executable, directory, consumer, options) do
-    run(executable, directory, ["--live"], consumer, options)
+    arguments = ["--live"] ++ microphone_arguments(Keyword.get(options, :microphone_device_id))
+    run(executable, directory, arguments, consumer, options)
   end
 
   defp run(executable, directory, arguments, consumer, options) do
+    default_startup_timeout = 30_000
+    default_stop_timeout = 15_000
+    default_termination_timeout = 1_000
     args = Enum.map(arguments ++ [directory], &String.to_charlist/1)
 
     port =
@@ -54,9 +74,10 @@ defmodule Jotty.Recorder do
       )
 
     {:os_pid, os_pid} = Port.info(port, :os_pid)
-    startup_timeout = Keyword.get(options, :startup_timeout, @startup_timeout)
-    termination_timeout = Keyword.get(options, :termination_timeout, @termination_timeout)
-    stop_options = {Keyword.get(options, :stop, :stdio), Keyword.get(options, :stop_timeout, @stop_timeout)}
+    startup_timeout = Keyword.get(options, :startup_timeout, default_startup_timeout)
+    termination_timeout = Keyword.get(options, :termination_timeout, default_termination_timeout)
+    stop_timeout = Keyword.get(options, :stop_timeout, default_stop_timeout)
+    stop_options = {Keyword.get(options, :stop, :stdio), stop_timeout}
 
     await_ready(port, os_pid, consumer, true, stop_options, startup_timeout, termination_timeout)
   end
@@ -258,4 +279,7 @@ defmodule Jotty.Recorder do
 
   defp exit_result(0), do: :ok
   defp exit_result(status), do: {:error, {:recorder, status}}
+
+  defp microphone_arguments(nil), do: []
+  defp microphone_arguments(device_id), do: ["--microphone-device-id", device_id]
 end

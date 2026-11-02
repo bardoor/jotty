@@ -23,9 +23,5 @@ let package = Package(
         ])
       ]
     ),
-    .testTarget(
-      name: "JottyRecorderTests",
-      dependencies: ["JottyRecorder"]
-    ),
   ]
 )

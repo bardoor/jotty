@@ -9,6 +9,5 @@
     "rootDir": "src/main",
     "types": ["node"]
   },
-  "include": ["src/main/**/*.ts"],
-  "exclude": ["src/main/**/*.test.ts"]
+  "include": ["src/main/**/*.ts"]
 }

@@ -6,9 +6,7 @@ defmodule Jotty.MixProject do
       app: :jotty,
       version: "0.3.0",
       elixir: "~> 1.20",
-      elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
-      aliases: aliases(),
       deps: deps(),
       escript: [
         main_module: Jotty.CLI,
@@ -34,10 +32,4 @@ defmodule Jotty.MixProject do
     ]
   end
 
-  defp elixirc_paths(:test), do: ["lib", "test/support"]
-  defp elixirc_paths(_environment), do: ["lib"]
-
-  defp aliases do
-    [test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"]]
-  end
 end

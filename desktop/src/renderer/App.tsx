@@ -1,21 +1,26 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import type { DesktopConnection } from "./connection";
 import {
   initialState, reduceServerEvent, type DesktopSettings, type GlobalContext,
-  type HermesActivity, type HistoricalSession, type SessionMetadata, type TranscriptionEvent
+  type HermesActivity, type HistoricalSession, type SessionMetadata, type TaskCard, type TranscriptionEvent
 } from "./protocol";
 
 interface AppProps { connection: DesktopConnection; }
+type DetailTab = "transcript" | "summary" | "tasks";
 
 export function App({ connection }: AppProps) {
   const [state, dispatch] = useReducer(reduceServerEvent, initialState);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [historyVisible, setHistoryVisible] = useState(false);
-  const [detailTab, setDetailTab] = useState<"transcript" | "summary">("transcript");
+  const [detailTab, setDetailTab] = useState<DetailTab>("transcript");
   const conversation = useRef<HTMLElement>(null);
-  const active = ["starting", "recording", "stopping"].includes(state.status);
+  const pendingTaskWork = state.taskSearchQuery !== null ||
+    state.taskCards.some((card) => card.status === "pending" || card.status === "applying");
+  const active = ["starting", "recording", "stopping"].includes(state.status) ||
+    (state.status === "completed" && pendingTaskWork);
 
   useEffect(() => connection.subscribe(dispatch), [connection]);
   useEffect(() => { if (state.settings) window.jotty?.setAlwaysOnTop(state.settings.alwaysOnTop); }, [state.settings?.alwaysOnTop]);
@@ -54,7 +59,8 @@ export function App({ connection }: AppProps) {
           <SessionDetail session={state.selectedSession} tab={detailTab} setTab={setDetailTab}
             connection={connection} />
         ) : (
-          <LiveView state={state} connection={connection} conversation={conversation} />
+          <LiveView state={state} tab={detailTab} setTab={setDetailTab}
+            connection={connection} conversation={conversation} />
         )}
 
         {historyVisible && !active && (
@@ -71,31 +77,46 @@ export function App({ connection }: AppProps) {
   );
 }
 
-function LiveView({ state, connection, conversation }: {
-  state: typeof initialState; connection: DesktopConnection; conversation: React.RefObject<HTMLElement | null>;
+function LiveView({ state, tab, setTab, connection, conversation }: {
+  state: typeof initialState; tab: DetailTab; setTab: (tab: DetailTab) => void;
+  connection: DesktopConnection; conversation: React.RefObject<HTMLElement | null>;
 }) {
   const blocker = settingsBlocker(state.settings);
-  return <>
-    <section className="conversation" aria-label="Transcript" ref={conversation}>
-      {state.status === "connecting" && <div className="empty-state">Connecting to Jotty…</div>}
-      {["idle", "completed", "failed"].includes(state.status) && state.utterances.length === 0 && (
-        <div className="empty-state"><h1>Ready when you are</h1>
-          <p>Capture system audio and your microphone in one private local session.</p>
-          {blocker && <div className="settings-status">{blocker}</div>}
-          <button className="primary start" type="button" disabled={blocker !== null}
-            onClick={() => connection.send({ type: "start_session" })}><span className="record-icon" />Start recording</button>
-        </div>
-      )}
+  if (state.status === "connecting") {
+    return <section className="conversation" aria-label="Transcript" ref={conversation}>
+      <div className="empty-state">Connecting to Jotty…</div>
+    </section>;
+  }
+  if (["idle", "completed", "failed"].includes(state.status) && state.utterances.length === 0) {
+    return <section className="conversation" aria-label="Transcript" ref={conversation}>
+      <div className="empty-state"><h1>Ready when you are</h1>
+        <p>Capture system audio and your microphone in one private local session.</p>
+        {blocker && <div className="settings-status">{blocker}</div>}
+        <button className="primary start" type="button" disabled={blocker !== null}
+          onClick={() => connection.send({ type: "start_session" })}><span className="record-icon" />Start recording</button>
+      </div>
+    </section>;
+  }
+
+  const transcript = <div className="live-transcript" aria-label="Transcript" ref={conversation as React.RefObject<HTMLDivElement>}>
       {state.status === "starting" && <div className="empty-state"><h1>Starting recording…</h1><p>Waiting for audio capture.</p></div>}
       {state.utterances.map((event, index) => <TranscriptMessage event={event} key={index} />)}
       {state.preview && <TranscriptMessage event={state.preview} provisional />}
       {state.realtimeError && <div className="error-banner">Live transcription stopped: {state.realtimeError}</div>}
       {state.error && <div className="error-banner">{state.error}</div>}
-    </section>
+    </div>;
+
+  return <section className="session-detail live-detail">
+    <div className="session-heading"><div className="session-title">
+      <h1>Live recording</h1><p>{state.status}</p>
+    </div></div>
+    <DetailTabs tab={tab} setTab={setTab} transcript={transcript} summary={state.summary}
+      cards={state.taskCards} taskSearchQuery={state.taskSearchQuery} taskError={state.taskError}
+      actionsEnabled connection={connection} />
     {state.status === "recording" && <div className="controls"><button className="primary stop" type="button"
       onClick={() => connection.send({ type: "stop_session" })}><span className="stop-icon" />Stop recording</button></div>}
     {state.status === "stopping" && <HermesProgress activities={state.activities} />}
-  </>;
+  </section>;
 }
 
 function HermesProgress({ activities }: { activities: HermesActivity[] }) {
@@ -123,7 +144,7 @@ function HistoryDrawer({ sessions, connection, onClose, onOpen }: {
 }
 
 function SessionDetail({ session, tab, setTab, connection }: {
-  session: HistoricalSession; tab: "transcript" | "summary"; setTab: (tab: "transcript" | "summary") => void;
+  session: HistoricalSession; tab: DetailTab; setTab: (tab: DetailTab) => void;
   connection: DesktopConnection;
 }) {
   const [renaming, setRenaming] = useState(false);
@@ -161,16 +182,189 @@ function SessionDetail({ session, tab, setTab, connection }: {
       <div className="detail-actions">{!renaming && <button type="button" onClick={() => setRenaming(true)}>Rename</button>}
         <button type="button" onClick={remove}>Delete</button></div></div>
     {session.playback_url ? <AudioPlayer src={session.playback_url} /> : <div className="unavailable">Playback unavailable</div>}
-    <div className="tabs"><button className={tab === "transcript" ? "active" : ""} type="button" onClick={() => setTab("transcript")}>Transcript</button>
-      <button className={tab === "summary" ? "active" : ""} type="button" onClick={() => setTab("summary")}>Summary</button></div>
-    <div className="detail-body">{tab === "transcript" ? (
+    <DetailTabs tab={tab} setTab={setTab} transcript={
       session.transcript_chunks.length > 0 ? session.transcript_chunks.map((chunk, index) =>
-        <article className="historical-chunk" key={`${chunk.position ?? index}`}><b>Speaker {chunk.speaker}</b><p>{chunk.text}</p></article>)
-        : <div className="unavailable">Transcript unavailable</div>
-    ) : session.summary_markdown ? <ReactMarkdown>{session.summary_markdown}</ReactMarkdown>
-      : <div className="unavailable">Summary unavailable</div>}</div>
+        <article className="historical-chunk" key={`${chunk.position ?? index}`}>
+          <b>Speaker {chunk.speaker}</b><p>{chunk.text}</p>
+        </article>) : <div className="unavailable">Transcript unavailable</div>
+    } summary={session.summary_markdown} cards={session.task_cards} taskSearchQuery={null}
+      taskError={session.task_error} actionsEnabled={false} connection={connection} />
     <button className="primary new-recording" type="button" onClick={() => connection.send({ type: "start_session" })}>Start a new recording</button>
   </section>;
+}
+
+function DetailTabs({ tab, setTab, transcript, summary, cards, taskSearchQuery, taskError, actionsEnabled, connection }: {
+  tab: DetailTab; setTab: (tab: DetailTab) => void; transcript: React.ReactNode; summary: string | null;
+  cards: TaskCard[]; taskSearchQuery: string | null; taskError: string | null;
+  actionsEnabled: boolean; connection: DesktopConnection;
+}) {
+  return <>
+    <div className="tabs">
+      <button className={tab === "transcript" ? "active" : ""} type="button"
+        onClick={() => setTab("transcript")}>Transcript</button>
+      <button className={tab === "summary" ? "active" : ""} type="button"
+        onClick={() => setTab("summary")}>Summary</button>
+      <button className={tab === "tasks" ? "active" : ""} type="button"
+        onClick={() => setTab("tasks")}>Tasks</button>
+    </div>
+    <div className="detail-body">
+      {tab === "transcript" ? transcript : tab === "summary" ? (
+        summary ? <Markdown>{summary}</Markdown>
+          : <div className="unavailable">Summary unavailable</div>
+      ) : <TaskCards cards={cards} searchQuery={taskSearchQuery} error={taskError}
+        actionsEnabled={actionsEnabled} connection={connection} />}
+    </div>
+  </>;
+}
+
+function TaskCards({ cards, searchQuery, error, actionsEnabled, connection }: {
+  cards: TaskCard[]; searchQuery: string | null; error: string | null;
+  actionsEnabled: boolean; connection: DesktopConnection;
+}) {
+  if (error) return <div className="error-banner">Task analysis unavailable: {error}</div>;
+  if (cards.length === 0 && !searchQuery) return <div className="unavailable">No Linear task actions found.</div>;
+  return <div className="task-list">
+    {searchQuery && <TaskSearchCard query={searchQuery} />}
+    {cards.map((card) => <TaskCardView card={card} actionsEnabled={actionsEnabled}
+      connection={connection} key={card.id} />)}
+  </div>;
+}
+
+function TaskSearchCard({ query }: { query: string }) {
+  return <article className="task-card task-search" aria-live="polite">
+    <div className="task-card-head"><span className="task-kind">Linear search</span>
+      <span className="task-state searching"><span className="task-spinner" />Searching</span></div>
+    <h2>{query}</h2>
+    <p>Looking for matching issues before preparing a proposal.</p>
+  </article>;
+}
+
+function TaskCardView({ card, actionsEnabled, connection }: {
+  card: TaskCard; actionsEnabled: boolean; connection: DesktopConnection;
+}) {
+  const pending = actionsEnabled && card.status === "pending";
+  return <article className={`task-card ${card.kind}`}>
+    <div className="task-card-head"><span className="task-kind">{taskKindLabel(card.kind)}</span>
+      <span className={`task-state ${card.status}`}>{card.status}</span></div>
+    <h2>{card.title}</h2>
+    {card.identifier && <div className="task-identifier">{card.identifier}</div>}
+    {card.kind === "update" && <div className="task-changes">{card.changes.map((change) =>
+      <div className={`task-change${change.field === "description" ? " description-change" : ""}`} key={change.field}>
+        <b>{fieldLabel(change.field)}</b>
+        <span className="change-before">{changeValue(change.field, change.from)}</span>
+        <span aria-hidden="true">{change.field === "description" ? "↓" : "→"}</span>
+        <span className="change-after">{changeValue(change.field, change.to)}</span>
+      </div>)}</div>}
+    <div className="task-description"><Markdown>{linearDescriptionMarkdown(card.description)}</Markdown></div>
+    <dl className="task-metadata">
+      <div><dt>Assignee</dt><dd>{card.assignee ?? "Unassigned"}</dd></div>
+      <div><dt>Priority</dt><dd>{priorityLabel(card.priority)}</dd></div>
+      <div><dt>Status</dt><dd>{card.issue_status}</dd></div>
+      <div><dt>Cycle</dt><dd>{card.cycle_number === null ? "No cycle" : `Cycle ${card.cycle_number}`}</dd></div>
+      <div><dt>Team</dt><dd>{card.team}</dd></div>
+      <div><dt>Project</dt><dd>{card.project ?? "No project"}</dd></div>
+    </dl>
+    <div className="task-labels">{card.labels.map((label) => <span key={label}>{label}</span>)}</div>
+    {card.error && <div className="error-banner">{card.error}</div>}
+    {pending && <div className="task-actions">
+      <button className="approve" type="button" aria-label={`Approve ${card.title}`}
+        onClick={() => connection.send({ type: "approve_task", card_id: card.id })}>Approve</button>
+      <button type="button" aria-label={`Deny ${card.title}`}
+        onClick={() => connection.send({ type: "deny_task", card_id: card.id })}>Deny</button>
+    </div>}
+  </article>;
+}
+
+function taskKindLabel(kind: TaskCard["kind"]): string {
+  if (kind === "existing") return "Already ready";
+  return kind === "create" ? "Create" : "Update";
+}
+
+function fieldLabel(field: string): string {
+  return field.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function changeValue(field: string, value: unknown): string {
+  if (field === "priority" && typeof value === "number") return priorityLabel(value);
+  if (field === "cycle" && typeof value === "number") return `Cycle ${value}`;
+  if (Array.isArray(value)) return value.join(", ") || "None";
+  if (value === null || value === "") return "None";
+  return String(value);
+}
+
+function priorityLabel(priority: number): string {
+  return ["No priority", "Urgent", "High", "Medium", "Low"][priority] ?? String(priority);
+}
+
+function linearDescriptionMarkdown(description: string): string {
+  return description
+    .replace(/<user\b[^>]*>[^<]*<\/user>\s+got this message from Soniox,\s*we'll need to see if we need to take action:\s*/gi, "")
+    .replace(/<linear-image>([\s\S]*?)<\/linear-image>/gi, (_, payload: string) => linearImageMarkdown(payload))
+    .replace(/<linear-embed\b([^>]*)>([\s\S]*?)<\/linear-embed>/gi,
+      (_, attributes: string, payload: string) => linearEmbedMarkdown(attributes, payload))
+    .replace(/<(linear-[a-z0-9-]+)\b[^>]*>[\s\S]*?<\/\1>/gi, "Unsupported Linear content")
+    .replace(/<(user|issue|project|document)\b([^>]*)>([^<]+)<\/\1>/gi,
+      (_, type: string, attributes: string, label: string) => linearMentionMarkdown(type, attributes, label))
+    .replace(/^\+{3}\s+([^\n]+)\n+([\s\S]*?)\n+^\+{3}\s*$/gm, "**$1**\n\n$2");
+}
+
+function linearMentionMarkdown(type: string, attributes: string, label: string): string {
+  const href = attributes.match(/\bhref="([^"]+)"/i)?.[1];
+  const url = safeWebUrl(href);
+  const text = type === "user" ? `@${label}` : label;
+  return url ? `[${markdownLabel(text)}](<${url}>)` : text;
+}
+
+function linearImageMarkdown(payload: string): string {
+  const data = linearPayload(payload);
+  const url = safeWebUrl(data?.attrs?.src);
+  if (!url) return "Linear image";
+  return `![${markdownLabel(data?.attrs?.title ?? "Linear image")}](<${url}>)`;
+}
+
+function linearEmbedMarkdown(attributes: string, payload: string): string {
+  const type = attributes.match(/\bnode-type="([^"]+)"/i)?.[1];
+  if (!type || !["file", "video", "embed"].includes(type)) return "Linear attachment";
+  const data = linearPayload(payload);
+  const url = safeWebUrl(data?.href ?? data?.src);
+  if (!url) return "Linear attachment";
+  const title = data?.title ?? data?.name ?? "Linear attachment";
+  return `[${markdownLabel(title)}](<${url}>)`;
+}
+
+function linearPayload(payload: string): {
+  href?: unknown; src?: unknown; title?: unknown; name?: unknown;
+  attrs?: { src?: unknown; title?: unknown };
+} | null {
+  try {
+    const value: unknown = JSON.parse(payload);
+    return typeof value === "object" && value !== null ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeWebUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function markdownLabel(value: unknown): string {
+  return typeof value === "string" ? value.replace(/[\\\[\]]/g, "\\$&") : "Linear content";
+}
+
+function Markdown({ children }: { children: string }) {
+  return <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+    a: ({ href, children: linkChildren }) => <a href={href} onClick={(event) => {
+      event.preventDefault();
+      if (href) window.jotty.openExternal(href);
+    }}>{linkChildren}</a>
+  }}>{children}</ReactMarkdown>;
 }
 
 function AudioPlayer({ src }: { src: string }) {

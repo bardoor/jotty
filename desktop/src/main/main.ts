@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
 import net from "node:net";
@@ -6,6 +6,7 @@ import path from "node:path";
 import readline from "node:readline";
 
 import { forwardBackendOutput } from "./backend";
+import { installExternalLinksIpc } from "./external-links-ipc";
 import { installSettingsIpc } from "./settings-ipc";
 import { windowFrameOptions } from "./window";
 
@@ -21,6 +22,7 @@ installSettingsIpc(
     approval: createHmac("sha256", contextApprovalSecret).update(directory).digest("hex")
   })
 );
+installExternalLinksIpc(ipcMain, shell);
 
 async function reservePort(): Promise<number> {
   return new Promise((resolve, reject) => {

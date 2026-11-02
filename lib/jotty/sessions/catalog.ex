@@ -5,6 +5,7 @@ defmodule Jotty.Sessions.Catalog do
 
   alias Jotty.Repo
   alias Jotty.Sessions.{Contexts, Session, Transcript}
+  alias Jotty.Tasks.{Card, Store}
 
   @spec all() :: [map()]
   def all do
@@ -22,6 +23,8 @@ defmodule Jotty.Sessions.Catalog do
         transcript_available: File.regular?(session.transcript_path),
         summary_markdown: read_optional(session.summary_path),
         contexts: Enum.map(Contexts.all(session.id), &context/1),
+        task_cards: task_cards(session.directory),
+        task_error: nil,
         playback_url: playback_url(session, audio_base_url)
       }
 
@@ -135,6 +138,13 @@ defmodule Jotty.Sessions.Catalog do
 
   defp read_optional(path) do
     if File.regular?(path), do: File.read!(path), else: nil
+  end
+
+  defp task_cards(directory) do
+    case Store.read(Path.join(directory, "tasks.json")) do
+      {:ok, cards} -> Enum.map(cards, &Card.to_map/1)
+      {:error, _reason} -> []
+    end
   end
 
   defp playback_url(session, base_url) do

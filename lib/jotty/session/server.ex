@@ -4,7 +4,9 @@ defmodule Jotty.Session.Server do
   use GenServer
 
   alias Jotty.Session.Events.{
+    ApproveTaskRequested,
     ClientAttached,
+    DenyTaskRequested,
     ProcessExited,
     SessionTerminating,
     StartSession,
@@ -33,6 +35,16 @@ defmodule Jotty.Session.Server do
 
   @spec stop_recording(pid()) :: :ok
   def stop_recording(server), do: GenServer.call(server, {:message, %StopSession{}})
+
+  @spec approve_task(pid(), Ecto.UUID.t()) :: :ok
+  def approve_task(server, card_id) do
+    GenServer.call(server, {:message, %ApproveTaskRequested{card_id: card_id}})
+  end
+
+  @spec deny_task(pid(), Ecto.UUID.t()) :: :ok
+  def deny_task(server, card_id) do
+    GenServer.call(server, {:message, %DenyTaskRequested{card_id: card_id}})
+  end
 
   @spec attach(pid(), pid()) :: Snapshot.t()
   def attach(server, client), do: GenServer.call(server, {:attach, client})

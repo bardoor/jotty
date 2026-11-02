@@ -3,9 +3,11 @@ defmodule Jotty.Desktop.Protocol do
 
   alias Jotty.Desktop.Commands.{
     AddContext,
+    ApproveTask,
     ChangeAlwaysOnTop,
     ChangeMicrophone,
     DeleteSession,
+    DenyTask,
     ListMicrophones,
     ListSessions,
     OpenSession,
@@ -27,6 +29,7 @@ defmodule Jotty.Desktop.Protocol do
 
   alias Jotty.Session.Events.{TranscriptionPreviewed, UtteranceCompleted}
   alias Jotty.Session.Presentation.Snapshot, as: SessionSnapshot
+  alias Jotty.Tasks.Card
 
   @spec decode!(String.t()) :: struct()
   def decode!(payload), do: command(Jason.decode!(payload))
@@ -75,12 +78,23 @@ defmodule Jotty.Desktop.Protocol do
     Jason.encode!(%{type: :command_rejected, command: command, reason: reason})
   end
 
+  def encode_event(%{type: type, card: %Card{} = card})
+      when type in ~w(task_card_proposed task_card_updated)a do
+    Jason.encode!(%{type: type, card: card_payload(card)})
+  end
+
+  def encode_event(%{type: :task_search_started, query: query}) do
+    Jason.encode!(%{type: :task_search_started, query: query})
+  end
+
   def encode_event(%{type: type} = event)
-      when type in ~w(state summary_ready hermes_activity failed realtime_transcription_failed settings_invalid command_rejected)a,
+      when type in ~w(state summary_ready hermes_activity failed realtime_transcription_failed task_analysis_failed settings_invalid command_rejected)a,
       do: Jason.encode!(event)
 
   defp command(%{"type" => "start_session"}), do: %StartSession{}
   defp command(%{"type" => "stop_session"}), do: %StopSession{}
+  defp command(%{"type" => "approve_task", "card_id" => card_id}), do: %ApproveTask{card_id: uuid!(card_id)}
+  defp command(%{"type" => "deny_task", "card_id" => card_id}), do: %DenyTask{card_id: uuid!(card_id)}
   defp command(%{"type" => "list_sessions"}), do: %ListSessions{}
   defp command(%{"type" => "open_session", "id" => id}), do: %OpenSession{id: uuid!(id)}
 
@@ -126,7 +140,10 @@ defmodule Jotty.Desktop.Protocol do
       preview: preview_payload(snapshot.preview),
       realtime_error: snapshot.realtime_error,
       summary: snapshot.summary,
-      activities: Enum.map(snapshot.activities, &activity_payload/1)
+      activities: Enum.map(snapshot.activities, &activity_payload/1),
+      task_cards: Enum.map(snapshot.task_cards, &card_payload/1),
+      task_search_query: snapshot.task_search_query,
+      task_error: snapshot.task_error
     }
   end
 
@@ -150,6 +167,32 @@ defmodule Jotty.Desktop.Protocol do
   defp chunk_payload(%{speaker: speaker, text: text, start_ms: start_ms, end_ms: end_ms}) do
     %{speaker: speaker, text: text, start_ms: start_ms, end_ms: end_ms}
   end
+
+  defp card_payload(%Card{} = card) do
+    %{
+      id: card.id,
+      kind: card.kind,
+      status: card.status,
+      issue_id: card.issue_id,
+      identifier: card.identifier,
+      url: card.url,
+      title: card.title,
+      description: card.description,
+      team: card.team,
+      project: card.project,
+      issue_status: card.issue_status,
+      assignee: card.assignee,
+      priority: card.priority,
+      estimate: card.estimate,
+      cycle_number: card.cycle_number,
+      labels: card.labels,
+      changes: Enum.map(card.changes, &change_payload/1),
+      trigger: card.trigger,
+      error: card.error
+    }
+  end
+
+  defp change_payload(change), do: %{field: change.field, from: change.from, to: change.to}
 
   defp uuid!(id) do
     case Ecto.UUID.cast(id) do

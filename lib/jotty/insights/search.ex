@@ -11,7 +11,9 @@ defmodule Jotty.Insights.Search do
     callback = &on_event.(Activity.from_event(:insight_search, &1))
     prompt = prompt(query, history, context_directories)
 
-    case Hermes.run(hermes, prompt, working_directory, ["file"], callback) do
+    options = [toolsets: ["file"], skills: [], yolo: false]
+
+    case Hermes.run(hermes, prompt, working_directory, options, callback) do
       {:ok, markdown} -> {:ok, markdown}
       {:error, reason} -> {:error, {:insight_search, reason}}
     end

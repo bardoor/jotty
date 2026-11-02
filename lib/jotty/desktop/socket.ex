@@ -7,9 +7,11 @@ defmodule Jotty.Desktop.Socket do
 
   alias Jotty.Desktop.Commands.{
     AddContext,
+    ApproveTask,
     ChangeAlwaysOnTop,
     ChangeMicrophone,
     DeleteSession,
+    DenyTask,
     ListMicrophones,
     ListSessions,
     OpenSession,
@@ -69,6 +71,8 @@ defmodule Jotty.Desktop.Socket do
        when command_struct in [
               StartSession,
               StopSession,
+              ApproveTask,
+              DenyTask,
               ListSessions,
               OpenSession,
               RenameSession,

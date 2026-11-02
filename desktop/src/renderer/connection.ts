@@ -3,6 +3,8 @@ import type { ServerEvent } from "./protocol";
 export type DesktopCommand =
   | { type: "start_session" }
   | { type: "stop_session" }
+  | { type: "approve_task"; card_id: string }
+  | { type: "deny_task"; card_id: string }
   | { type: "change_always_on_top"; enabled: boolean }
   | { type: "change_microphone"; microphone_device_id: string | null }
   | { type: "add_context"; path: string; approval: string }

@@ -13,7 +13,9 @@ defmodule Jotty.Insights.IntentClassifier do
     callback = &on_event.(Activity.from_event(:insight_classification, &1))
     prompt = prompt(history)
 
-    case Hermes.run(hermes, prompt, working_directory, [], callback) do
+    options = [toolsets: [], skills: [], yolo: false]
+
+    case Hermes.run(hermes, prompt, working_directory, options, callback) do
       {:ok, response} -> parse(response)
       {:error, reason} -> {:error, {:insight_classification, reason}}
     end

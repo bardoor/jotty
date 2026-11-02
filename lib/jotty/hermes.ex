@@ -4,45 +4,51 @@ defmodule Jotty.Hermes do
   alias Jotty.Hermes.Event
   alias Jotty.TemporaryDirectory
 
-  @spec run(Path.t(), String.t(), Path.t(), [String.t()], (Event.t() -> any())) ::
+  @type option ::
+          {:toolsets, [String.t()]}
+          | {:skills, [String.t()]}
+          | {:yolo, boolean()}
+
+  @spec run(Path.t(), String.t(), Path.t(), [option()], (Event.t() -> any())) ::
           {:ok, String.t()} | {:error, {:hermes, non_neg_integer(), String.t()}}
-  def run(executable, prompt, working_directory, toolsets, on_event) do
+  def run(executable, prompt, working_directory, options, on_event) do
     workspace = TemporaryDirectory.create!("jotty-hermes")
     prompt_path = Path.join(workspace, "prompt.txt")
     File.write!(prompt_path, prompt)
 
     try do
       executable
-      |> open(prompt_path, working_directory, toolsets)
+      |> open(prompt_path, working_directory, options)
       |> await(on_event, nil, "", "")
     after
       File.rm_rf!(workspace)
     end
   end
 
-  defp open(executable, prompt_path, working_directory, toolsets) do
-    toolsets = toolset_name(toolsets)
+  defp open(executable, prompt_path, working_directory, options) do
+    toolsets = options |> Keyword.fetch!(:toolsets) |> toolset_name()
+    skills = Keyword.fetch!(options, :skills)
+    yolo = Keyword.fetch!(options, :yolo)
     line_limit = 10_000
 
-    arguments = [
-      "chat",
-      "--query-file",
-      prompt_path,
-      "--oneshot",
-      "--format",
-      "stream-json",
-      "--model",
-      "gpt-5.6-luna",
-      "--reasoning",
-      "low",
-      "--toolsets",
-      toolsets,
-      "--ignore-rules",
-      "--source",
-      "tool",
-      "--run-budget",
-      "300"
-    ]
+    arguments =
+      [
+        "chat",
+        "--query-file",
+        prompt_path,
+        "--oneshot",
+        "--format",
+        "stream-json",
+        "--model",
+        "gpt-5.6-luna",
+        "--reasoning",
+        "low",
+        "--toolsets",
+        toolsets,
+        "--ignore-rules",
+        "--source",
+        "tool"
+      ] ++ skill_arguments(skills) ++ yolo_arguments(yolo)
 
     Port.open(
       {:spawn_executable, String.to_charlist(executable)},
@@ -60,6 +66,12 @@ defmodule Jotty.Hermes do
 
   defp toolset_name([]), do: "bot_room"
   defp toolset_name(toolsets), do: Enum.join(toolsets, ",")
+
+  defp skill_arguments([]), do: []
+  defp skill_arguments(skills), do: ["--skills", Enum.join(skills, ",")]
+
+  defp yolo_arguments(false), do: []
+  defp yolo_arguments(true), do: ["--yolo"]
 
   defp await(port, on_event, result, partial, diagnostics) do
     timeout = 330_000

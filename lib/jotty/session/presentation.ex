@@ -14,12 +14,17 @@ defmodule Jotty.Session.Presentation do
     SessionStarting,
     SessionStopping,
     SummaryReady,
+    TaskAnalysisFailed,
+    TaskCardProposed,
+    TaskCardUpdated,
+    TaskSearchStarted,
     TranscriptionPreviewed,
     UtteranceCompleted
   }
 
   alias Jotty.Session.Presentation.Snapshot
   alias Jotty.Session.State
+  alias Jotty.Tasks.Card
 
   @type status :: :idle | :starting | :recording | :stopping | :completed | :failed
   @type t :: %__MODULE__{
@@ -31,6 +36,9 @@ defmodule Jotty.Session.Presentation do
           realtime_error: String.t() | nil,
           summary: String.t() | nil,
           activities: [HermesActivityObserved.t()],
+          task_cards: [Card.t()],
+          task_search_query: String.t() | nil,
+          task_error: String.t() | nil,
           recording_directory: Path.t() | nil
         }
 
@@ -42,6 +50,9 @@ defmodule Jotty.Session.Presentation do
             realtime_error: nil,
             summary: nil,
             activities: [],
+            task_cards: [],
+            task_search_query: nil,
+            task_error: nil,
             recording_directory: nil
 
   @spec new(keyword()) :: t()
@@ -61,6 +72,10 @@ defmodule Jotty.Session.Presentation do
       UtteranceCompleted,
       RealtimeTranscriptionFailed,
       HermesActivityObserved,
+      TaskCardProposed,
+      TaskCardUpdated,
+      TaskSearchStarted,
+      TaskAnalysisFailed,
       SummaryReady,
       SessionCompleted,
       SessionFailed
@@ -76,6 +91,9 @@ defmodule Jotty.Session.Presentation do
       realtime_error: state.presentation.realtime_error,
       summary: state.presentation.summary,
       activities: state.presentation.activities,
+      task_cards: state.presentation.task_cards,
+      task_search_query: state.presentation.task_search_query,
+      task_error: state.presentation.task_error,
       recording_directory: state.presentation.recording_directory
     }
   end
@@ -153,6 +171,44 @@ defmodule Jotty.Session.Presentation do
         message: event.message
       })
     end
+  end
+
+  def handle_message(%TaskSearchStarted{query: query} = event, %State{} = state) do
+    %{state | presentation: %{state.presentation | task_search_query: query, task_error: nil}}
+    |> emit_domain(event)
+    |> emit_client(%{type: :task_search_started, query: query})
+  end
+
+  def handle_message(%TaskCardProposed{card: card} = event, %State{} = state) do
+    presentation = %{
+      state.presentation
+      | task_cards: state.presentation.task_cards ++ [card],
+        task_search_query: nil,
+        task_error: nil
+    }
+
+    %{state | presentation: presentation}
+    |> emit_domain(event)
+    |> emit_client(%{type: :task_card_proposed, card: card})
+  end
+
+  def handle_message(%TaskCardUpdated{card: card} = event, %State{} = state) do
+    cards =
+      Enum.map(state.presentation.task_cards, fn existing ->
+        if existing.id == card.id, do: card, else: existing
+      end)
+
+    %{state | presentation: %{state.presentation | task_cards: cards}}
+    |> emit_domain(event)
+    |> emit_client(%{type: :task_card_updated, card: card})
+  end
+
+  def handle_message(%TaskAnalysisFailed{reason: reason} = event, %State{} = state) do
+    error = inspect(reason)
+
+    %{state | presentation: %{state.presentation | task_search_query: nil, task_error: error}}
+    |> emit_domain(event)
+    |> emit_client(%{type: :task_analysis_failed, reason: error})
   end
 
   def handle_message(%SummaryReady{recording: recording, markdown: markdown} = event, %State{} = state) do

@@ -10,5 +10,6 @@ contextBridge.exposeInMainWorld("jotty", {
   websocketUrl: argument.slice("--jotty-ws-url=".length),
   pickContextDirectory: () =>
     ipcRenderer.invoke("jotty:pick-context-directory") as Promise<{ path: string; approval: string } | null>,
-  setAlwaysOnTop: (enabled: boolean) => ipcRenderer.send("jotty:set-always-on-top", enabled)
+  setAlwaysOnTop: (enabled: boolean) => ipcRenderer.send("jotty:set-always-on-top", enabled),
+  openExternal: (url: string) => ipcRenderer.send("jotty:open-external", url)
 });

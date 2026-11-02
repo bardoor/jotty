@@ -14,7 +14,8 @@ defmodule Jotty.Summarizer do
     hermes = System.find_executable("hermes") || raise "hermes executable was not found in PATH"
     transcript = File.read!(transcript_path)
     working_directory = Path.dirname(transcript_path)
-    result = Hermes.run(hermes, prompt(transcript), working_directory, [], on_event)
+    options = [toolsets: [], skills: [], yolo: false]
+    result = Hermes.run(hermes, prompt(transcript), working_directory, options, on_event)
 
     case result do
       {:ok, summary} ->

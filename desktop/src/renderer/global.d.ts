@@ -6,6 +6,7 @@ declare global {
       websocketUrl: string;
       pickContextDirectory(): Promise<{ path: string; approval: string } | null>;
       setAlwaysOnTop(enabled: boolean): void;
+      openExternal(url: string): void;
     };
   }
 }

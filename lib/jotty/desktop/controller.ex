@@ -4,7 +4,9 @@ defmodule Jotty.Desktop.Controller do
   use GenServer
 
   alias Jotty.Desktop.Commands.{
+    ApproveTask,
     DeleteSession,
+    DenyTask,
     ListSessions,
     OpenSession,
     RenameSession,
@@ -26,6 +28,10 @@ defmodule Jotty.Desktop.Controller do
     SessionStarting,
     SessionStopping,
     SummaryReady,
+    TaskAnalysisFailed,
+    TaskCardProposed,
+    TaskCardUpdated,
+    TaskSearchStarted,
     TranscriptionPreviewed,
     UtteranceCompleted
   }
@@ -112,6 +118,22 @@ defmodule Jotty.Desktop.Controller do
 
   def handle_call({:command, %StopSession{}}, _from, state) do
     {:reply, {:event, rejected(:stop_session, :no_active_session)}, state}
+  end
+
+  def handle_call({:command, %ApproveTask{card_id: card_id}}, _from, %{active: %{pid: pid}} = state) do
+    task_command(:approve_task, fn -> SessionServer.approve_task(pid, card_id) end, state)
+  end
+
+  def handle_call({:command, %DenyTask{card_id: card_id}}, _from, %{active: %{pid: pid}} = state) do
+    task_command(:deny_task, fn -> SessionServer.deny_task(pid, card_id) end, state)
+  end
+
+  def handle_call({:command, %ApproveTask{}}, _from, state) do
+    {:reply, {:event, rejected(:approve_task, :no_active_session)}, state}
+  end
+
+  def handle_call({:command, %DenyTask{}}, _from, state) do
+    {:reply, {:event, rejected(:deny_task, :no_active_session)}, state}
   end
 
   def handle_call({:command, %command_struct{} = command}, _from, %{active: active} = state)
@@ -240,9 +262,8 @@ defmodule Jotty.Desktop.Controller do
   defp handle_session_event(%SessionCompleted{}, %{active: active} = state) do
     case Recordings.complete(active.id, active.chunks, DateTime.utc_now()) do
       {:ok, _session} ->
-        state
-        |> open_completed(active.id)
-        |> reap_active()
+        active = %{active | phase: :completed}
+        maybe_finalize_completed(%{state | active: active})
 
       {:error, reason} ->
         fail_recording!(active, {:catalog, reason})
@@ -262,6 +283,11 @@ defmodule Jotty.Desktop.Controller do
 
   defp handle_session_event(%RecorderFinished{}, %{active: %{phase: {:failed, _}}} = state) do
     finalize_failed(state)
+  end
+
+  defp handle_session_event(%event{}, %{active: %{phase: :completed}} = state)
+       when event in [TaskCardProposed, TaskCardUpdated, TaskAnalysisFailed] do
+    maybe_finalize_completed(state)
   end
 
   defp handle_session_event(_event, state), do: state
@@ -284,6 +310,20 @@ defmodule Jotty.Desktop.Controller do
     |> reap_active()
   end
 
+  defp maybe_finalize_completed(%{active: %{pid: pid, id: id}} = state) do
+    case session_call(fn -> SessionServer.snapshot(pid) end) do
+      {:ok, snapshot} ->
+        waiting? =
+          snapshot.task_search_query != nil or
+            Enum.any?(snapshot.task_cards, &(&1.status in [:pending, :applying]))
+
+        if waiting?, do: state, else: state |> open_completed(id) |> reap_active()
+
+      {:error, reason} ->
+        fail_active(state, {:session_process_exit, reason})
+    end
+  end
+
   defp reap_active(%{active: %{pid: pid}} = state) do
     GenServer.stop(pid)
     %{state | active: nil}
@@ -292,8 +332,25 @@ defmodule Jotty.Desktop.Controller do
   defp forward_session_event(state, %SessionStarting{}), do: emit(state, %{type: :state, status: :starting})
   defp forward_session_event(state, %RecordingStarted{}), do: emit(state, %{type: :state, status: :recording})
   defp forward_session_event(state, %SessionStopping{}), do: emit(state, %{type: :state, status: :stopping})
+  defp forward_session_event(state, %SessionCompleted{}), do: emit(state, %{type: :state, status: :completed})
   defp forward_session_event(state, %TranscriptionPreviewed{} = event), do: emit(state, event)
   defp forward_session_event(state, %UtteranceCompleted{} = event), do: emit(state, event)
+
+  defp forward_session_event(state, %TaskCardProposed{card: card}) do
+    emit(state, %{type: :task_card_proposed, card: card})
+  end
+
+  defp forward_session_event(state, %TaskCardUpdated{card: card}) do
+    emit(state, %{type: :task_card_updated, card: card})
+  end
+
+  defp forward_session_event(state, %TaskSearchStarted{query: query}) do
+    emit(state, %{type: :task_search_started, query: query})
+  end
+
+  defp forward_session_event(state, %TaskAnalysisFailed{reason: reason}) do
+    emit(state, %{type: :task_analysis_failed, reason: inspect(reason)})
+  end
 
   defp forward_session_event(state, %HermesActivityObserved{} = event) do
     emit(state, %{
@@ -355,8 +412,18 @@ defmodule Jotty.Desktop.Controller do
       preview: nil,
       realtime_error: nil,
       summary: nil,
-      activities: []
+      activities: [],
+      task_cards: [],
+      task_search_query: nil,
+      task_error: nil
     }
+  end
+
+  defp task_command(command, callback, state) do
+    case session_call(callback) do
+      {:ok, :ok} -> {:reply, :ok, state}
+      {:error, reason} -> {:reply, {:event, rejected(command, {:session_process_exit, reason})}, state}
+    end
   end
 
   defp session_call(function) do

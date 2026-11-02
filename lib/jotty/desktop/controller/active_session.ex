@@ -4,7 +4,7 @@ defmodule Jotty.Desktop.Controller.ActiveSession do
   alias Jotty.Recording
   alias Jotty.STT.TranscriptionChunk
 
-  @type phase :: :starting | :recording | :stopping | {:failed, term()}
+  @type phase :: :starting | :recording | :stopping | :completed | {:failed, term()}
 
   @type t :: %__MODULE__{
           pid: pid(),

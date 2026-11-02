@@ -1,11 +1,23 @@
 defmodule Jotty.Session.Events do
   @moduledoc "Delivers typed session messages through handler-owned subscriptions."
 
-  alias Jotty.Session.{Insights, Lifecycle, Presentation, Recording, State, Summary, Transcript, Transcription}
+  alias Jotty.Session.{
+    Insights,
+    Lifecycle,
+    Presentation,
+    Recording,
+    State,
+    Summary,
+    Tasks,
+    Transcript,
+    Transcription
+  }
 
   alias Jotty.Session.Events.{
     AudioReceived,
+    ApproveTaskRequested,
     ClientAttached,
+    DenyTaskRequested,
     HermesActivityObserved,
     NativeAudioFailed,
     ProcessExited,
@@ -23,6 +35,10 @@ defmodule Jotty.Session.Events do
     SummaryCompleted,
     SummaryFailed,
     SummaryReady,
+    TaskAnalysisFailed,
+    TaskCardProposed,
+    TaskCardUpdated,
+    TaskSearchStarted,
     TranscriptFailed,
     TranscriptReady,
     TranscriptionFinished,
@@ -32,7 +48,9 @@ defmodule Jotty.Session.Events do
 
   @type message ::
           AudioReceived.t()
+          | ApproveTaskRequested.t()
           | ClientAttached.t()
+          | DenyTaskRequested.t()
           | HermesActivityObserved.t()
           | NativeAudioFailed.t()
           | ProcessExited.t()
@@ -50,6 +68,10 @@ defmodule Jotty.Session.Events do
           | SummaryCompleted.t()
           | SummaryFailed.t()
           | SummaryReady.t()
+          | TaskAnalysisFailed.t()
+          | TaskCardProposed.t()
+          | TaskCardUpdated.t()
+          | TaskSearchStarted.t()
           | TranscriptFailed.t()
           | TranscriptReady.t()
           | TranscriptionFinished.t()
@@ -82,7 +104,7 @@ defmodule Jotty.Session.Events do
   end
 
   defp subscribers(message) do
-    handlers = [Lifecycle, Recording, Transcription, Transcript, Insights, Summary, Presentation]
+    handlers = [Lifecycle, Recording, Transcription, Transcript, Insights, Tasks, Summary, Presentation]
     Enum.filter(handlers, &(message.__struct__ in &1.subscriptions()))
   end
 end

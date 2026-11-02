@@ -27,7 +27,6 @@ defmodule Jotty.Session.Events do
     TranscriptReady,
     TranscriptionFinished,
     TranscriptionPreviewed,
-    TranscriptionTimeout,
     UtteranceCompleted
   }
 
@@ -55,7 +54,6 @@ defmodule Jotty.Session.Events do
           | TranscriptReady.t()
           | TranscriptionFinished.t()
           | TranscriptionPreviewed.t()
-          | TranscriptionTimeout.t()
           | UtteranceCompleted.t()
 
   @spec publish(State.t(), message()) :: State.t()

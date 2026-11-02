@@ -16,8 +16,7 @@ defmodule Jotty.Session.Transcription do
     SessionFailed,
     SessionStarting,
     SessionTerminating,
-    TranscriptionFinished,
-    TranscriptionTimeout
+    TranscriptionFinished
   }
 
   alias Jotty.Session.{State}
@@ -31,7 +30,6 @@ defmodule Jotty.Session.Transcription do
           shutdown_timeout: non_neg_integer(),
           stream: pid() | nil,
           reference: reference() | nil,
-          timer: reference() | nil,
           phase: phase()
         }
 
@@ -42,7 +40,6 @@ defmodule Jotty.Session.Transcription do
                 shutdown_timeout: 10_000,
                 stream: nil,
                 reference: nil,
-                timer: nil,
                 phase: :idle
               ]
 
@@ -67,7 +64,6 @@ defmodule Jotty.Session.Transcription do
       RealtimeTranscriptionFailed,
       SessionFailed,
       SessionTerminating,
-      TranscriptionTimeout,
       ProcessExited
     ]
   end
@@ -95,9 +91,8 @@ defmodule Jotty.Session.Transcription do
 
   def handle_message(%RecorderFinished{}, %State{transcription: %__MODULE__{phase: :streaming}} = state) do
     Logger.info("finishing", scope: :transcription, provider: :soniox)
-    Stream.finish(state.transcription.stream)
-    timer = Process.send_after(self(), %TranscriptionTimeout{}, state.transcription.shutdown_timeout)
-    transcription = %{state.transcription | phase: :finishing, timer: timer}
+    Stream.finish(state.transcription.stream, state.transcription.shutdown_timeout)
+    transcription = %{state.transcription | phase: :finishing}
     %{state | transcription: transcription}
   end
 
@@ -105,8 +100,7 @@ defmodule Jotty.Session.Transcription do
 
   def handle_message(%TranscriptionFinished{}, %State{} = state) do
     Logger.info("finished", scope: :transcription, provider: :soniox)
-    cancel_timer(state.transcription.timer)
-    transcription = %{state.transcription | stream: nil, reference: nil, timer: nil, phase: :closed}
+    transcription = %{state.transcription | stream: nil, reference: nil, phase: :closed}
     %{state | transcription: transcription}
   end
 
@@ -116,28 +110,12 @@ defmodule Jotty.Session.Transcription do
       )
       when phase in ~w(streaming finishing)a do
     Stream.stop(state.transcription.stream)
-    cancel_timer(state.transcription.timer)
     Logger.error("failed", scope: :transcription, provider: :soniox, reason: inspect(failure.reason))
-    transcription = %{state.transcription | stream: nil, reference: nil, timer: nil, phase: :failed}
+    transcription = %{state.transcription | stream: nil, reference: nil, phase: :failed}
     %{state | transcription: transcription}
   end
 
   def handle_message(%RealtimeTranscriptionFailed{}, %State{} = state), do: state
-
-  def handle_message(
-        %TranscriptionTimeout{},
-        %State{transcription: %__MODULE__{phase: :finishing}} = state
-      ) do
-    Logger.error("timeout",
-      scope: :transcription,
-      provider: :soniox,
-      timeout_ms: state.transcription.shutdown_timeout
-    )
-
-    Events.publish(state, %RealtimeTranscriptionFailed{source: nil, reason: :shutdown_timeout})
-  end
-
-  def handle_message(%TranscriptionTimeout{}, %State{} = state), do: state
 
   def handle_message(
         %ProcessExited{reference: reference, pid: stream},
@@ -190,13 +168,9 @@ defmodule Jotty.Session.Transcription do
 
   defp stop(%State{transcription: %__MODULE__{stream: stream}} = state) when is_pid(stream) do
     Stream.stop(stream)
-    cancel_timer(state.transcription.timer)
-    transcription = %{state.transcription | stream: nil, reference: nil, timer: nil, phase: :failed}
+    transcription = %{state.transcription | stream: nil, reference: nil, phase: :failed}
     %{state | transcription: transcription}
   end
 
   defp stop(%State{} = state), do: state
-
-  defp cancel_timer(nil), do: :ok
-  defp cancel_timer(timer), do: Process.cancel_timer(timer)
 end

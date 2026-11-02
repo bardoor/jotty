@@ -8,8 +8,7 @@ defmodule Jotty.Session.Server do
     ProcessExited,
     SessionTerminating,
     StartSession,
-    StopSession,
-    TranscriptionTimeout
+    StopSession
   }
 
   alias Jotty.Session.{Events, Presentation, State}
@@ -77,10 +76,6 @@ defmodule Jotty.Session.Server do
   @impl GenServer
   def handle_info({:DOWN, reference, :process, pid, reason}, state) do
     message = %ProcessExited{reference: reference, pid: pid, reason: reason}
-    {:noreply, Events.dispatch(state, message)}
-  end
-
-  def handle_info(%TranscriptionTimeout{} = message, state) do
     {:noreply, Events.dispatch(state, message)}
   end
 

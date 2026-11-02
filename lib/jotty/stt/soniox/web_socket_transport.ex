@@ -6,10 +6,9 @@ defmodule Jotty.STT.Soniox.WebSocketTransport do
   require Logger
 
   @impl Jotty.STT.Soniox.Transport
-  def start(owner, source, configuration, []) do
+  def start(owner, :mixed, configuration, []) do
     state = %{
       owner: owner,
-      source: source,
       configuration: configuration,
       logger_metadata: Logger.metadata()
     }
@@ -19,7 +18,8 @@ defmodule Jotty.STT.Soniox.WebSocketTransport do
       __MODULE__,
       state,
       insecure: false,
-      cacerts: :public_key.cacerts_get()
+      cacerts: :public_key.cacerts_get(),
+      socket_options: [send_timeout: 5_000, send_timeout_close: true]
     )
   end
 
@@ -50,7 +50,8 @@ defmodule Jotty.STT.Soniox.WebSocketTransport do
   def handle_connect(_connection, state) do
     Logger.metadata(state.logger_metadata)
     send(self(), :send_configuration)
-    {:ok, Map.delete(state, :logger_metadata)}
+    Process.send_after(self(), :ping, 5_000)
+    {:ok, Map.put(state, :pong_timer, nil)}
   end
 
   @impl WebSockex
@@ -58,14 +59,31 @@ defmodule Jotty.STT.Soniox.WebSocketTransport do
     {:reply, {:text, state.configuration}, state}
   end
 
+  def handle_info(:ping, state) do
+    timer = :erlang.start_timer(10_000, self(), :pong)
+    {:reply, {:ping, "jotty"}, %{state | pong_timer: timer}}
+  end
+
+  def handle_info({:timeout, timer, :pong}, %{pong_timer: timer} = state), do: {:close, state}
+  def handle_info({:timeout, _timer, :pong}, state), do: {:ok, state}
+
+  @impl WebSockex
+  def handle_pong({:pong, "jotty"}, %{pong_timer: timer} = state) when is_reference(timer) do
+    Process.cancel_timer(timer)
+    Process.send_after(self(), :ping, 5_000)
+    {:ok, %{state | pong_timer: nil}}
+  end
+
+  def handle_pong(_frame, state), do: {:ok, state}
+
   @impl WebSockex
   def handle_frame({:text, payload}, state) do
-    send(state.owner, {:soniox_transport, state.source, {:text, payload}})
+    send(state.owner, {:soniox_transport, self(), {:text, payload}})
     {:ok, state}
   end
 
   def handle_frame({:binary, _payload}, state) do
-    send(state.owner, {:soniox_transport, state.source, {:unexpected_frame, :binary}})
+    send(state.owner, {:soniox_transport, self(), {:unexpected_frame, :binary}})
     {:ok, state}
   end
 
@@ -75,7 +93,7 @@ defmodule Jotty.STT.Soniox.WebSocketTransport do
   @impl WebSockex
   def handle_disconnect(%{reason: reason}, state) do
     Logger.info("transport_disconnected", scope: :transcription, provider: :soniox, reason: inspect(reason))
-    send(state.owner, {:soniox_transport, state.source, disconnect(reason)})
+    send(state.owner, {:soniox_transport, self(), disconnect(reason)})
     {:ok, state}
   end
 
